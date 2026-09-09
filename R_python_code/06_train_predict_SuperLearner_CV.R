@@ -1,7 +1,7 @@
-#### 04 Train SuperLearner With CV And Predict Event Probability ####
+#### 06 Train SuperLearner With CV And Predict Event Probability ####
 
 # This script mirrors the table-first prediction workflow in
-# 03_train_predict_brt_simple.R, but fits a SuperLearner model instead of a BRT.
+# 04_train_predict_brt_simple.R, but fits a SuperLearner model instead of a BRT.
 # It keeps the first pass deliberately light: three quick learners, 10-fold
 # outer cross-validation, F1-based candidate/threshold selection, and annual
 # prediction maps for 2020-2025.
@@ -44,8 +44,8 @@ find_code_dir <- function() {
   }
 
   stop(
-    "Could not locate the KSPH Code directory. Run this with source('R_python_code/05_train_predict_SuperLearner_CV.R') ",
-    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/05_train_predict_SuperLearner_CV.R') from the parent folder.",
+    "Could not locate the KSPH Code directory. Run this with source('R_python_code/06_train_predict_SuperLearner_CV.R') ",
+    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/06_train_predict_SuperLearner_CV.R') from the parent folder.",
     call. = FALSE
   )
 }
@@ -65,11 +65,71 @@ if (dir.exists(WINDOWS_USER_R_LIB) && !WINDOWS_USER_R_LIB %in% .libPaths()) {
   .libPaths(c(WINDOWS_USER_R_LIB, .libPaths()))
 }
 
-TRAINING_CSV <- file.path(CODE_DIR, "data", "dataset2.csv")
-PREDICTION_GRID_CSV <- file.path(CODE_DIR, "data", "prediction_grid_covariates_2020_2025.csv")
+sanitize_path_component <- function(value) {
+  value <- trimws(as.character(value))
+  value <- gsub("[^A-Za-z0-9]+", "_", value)
+  value <- gsub("^_+|_+$", "", value)
+  if (!nzchar(value)) {
+    stop("Analysis folder name cannot be blank after sanitizing.", call. = FALSE)
+  }
+  value
+}
 
-MODEL_DIR <- file.path(CODE_DIR, "models", "superlearner_cv")
-OUTPUT_DIR <- file.path(CODE_DIR, "outputs", "predictions", "superlearner_cv")
+# STUDY_AREA_ANALYSIS_NAME chooses which extracted study-area dataset to read.
+# SUBANALYSIS_NAME optionally controls where this SuperLearner prototype writes
+# results within that study-area analysis. Leave it "" for the default
+# superlearner_cv folder, or leave it "" with TRAINING_TYPE_FILTER <- "Z" to
+# write to superlearner_cv_type_Z automatically.
+STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
+SUBANALYSIS_NAME <- ""
+TRAINING_TYPE_FILTER <- ""
+ALLOW_LEGACY_PATH_FALLBACK <- FALSE
+
+ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
+ACTIVE_TRAINING_TYPE_FILTER <- trimws(as.character(TRAINING_TYPE_FILTER))
+ACTIVE_TRAINING_TYPE_FILTER <- ACTIVE_TRAINING_TYPE_FILTER[!is.na(ACTIVE_TRAINING_TYPE_FILTER) & nzchar(ACTIVE_TRAINING_TYPE_FILTER)]
+ACTIVE_SUBANALYSIS_NAME <- trimws(as.character(SUBANALYSIS_NAME))
+ACTIVE_SUBANALYSIS_NAME <- ACTIVE_SUBANALYSIS_NAME[!is.na(ACTIVE_SUBANALYSIS_NAME) & nzchar(ACTIVE_SUBANALYSIS_NAME)]
+if (length(ACTIVE_SUBANALYSIS_NAME) > 1) {
+  stop("SUBANALYSIS_NAME must be a single value.", call. = FALSE)
+}
+if (length(ACTIVE_SUBANALYSIS_NAME) == 0 && length(ACTIVE_TRAINING_TYPE_FILTER) > 0) {
+  ACTIVE_SUBANALYSIS_NAME <- paste0(
+    "superlearner_cv_type_",
+    paste(vapply(ACTIVE_TRAINING_TYPE_FILTER, sanitize_path_component, character(1)), collapse = "_")
+  )
+}
+if (length(ACTIVE_SUBANALYSIS_NAME) == 1) {
+  ACTIVE_SUBANALYSIS_NAME <- sanitize_path_component(ACTIVE_SUBANALYSIS_NAME)
+} else {
+  ACTIVE_SUBANALYSIS_NAME <- "superlearner_cv"
+}
+ANALYSIS_DIR <- file.path(CODE_DIR, "analyses", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+DATA_DIR <- file.path(ANALYSIS_DIR, "data")
+ANALYSIS_MODEL_DIR <- file.path(ANALYSIS_DIR, "models")
+ANALYSIS_OUTPUT_DIR <- file.path(ANALYSIS_DIR, "outputs")
+
+# Optional migration fallback: set ALLOW_LEGACY_PATH_FALLBACK <- TRUE only if
+# you intentionally need to read old root-level KSPH Code/data files. DRC and
+# other new study-area analyses never fall back.
+LEGACY_DATA_DIR <- file.path(CODE_DIR, "data")
+if (
+  isTRUE(ALLOW_LEGACY_PATH_FALLBACK) &&
+  identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa") &&
+    (!file.exists(file.path(DATA_DIR, "dataset2.csv")) ||
+       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "dataset2.csv")) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))
+) {
+  message("Using legacy root-level data folder because the equatorial Africa analysis data folder is not complete yet: ", LEGACY_DATA_DIR)
+  DATA_DIR <- LEGACY_DATA_DIR
+}
+
+TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
+PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv")
+
+MODEL_DIR <- file.path(ANALYSIS_MODEL_DIR, ACTIVE_SUBANALYSIS_NAME)
+OUTPUT_DIR <- file.path(ANALYSIS_OUTPUT_DIR, ACTIVE_SUBANALYSIS_NAME)
 PREDICTION_TABLE_DIR <- file.path(OUTPUT_DIR, "tables")
 ANNUAL_SUMMARY_RASTER_DIR <- file.path(OUTPUT_DIR, "annual_summary_rasters")
 ANNUAL_SUMMARY_PLOT_DIR <- file.path(OUTPUT_DIR, "annual_summary_plots")
@@ -101,7 +161,7 @@ OUTCOME_COLUMN <- "outcome"
 EVENT_VALUE <- 1L
 CONTROL_VALUE <- 0L
 TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country")
-PREDICTION_BASE_COLUMNS <- c("grid_id", "grid_batch", "x", "y", "year", "longitude", "latitude")
+PREDICTION_BASE_COLUMNS <- c("grid_id", "grid_batch", "x", "y", "year", "longitude", "latitude", "country")
 
 N_FOLDS <- 10
 SL_INTERNAL_FOLDS <- 5
@@ -179,6 +239,64 @@ require_package <- function(package) {
 
 make_dir <- function(path) {
   dir.create(path, showWarnings = FALSE, recursive = TRUE)
+}
+
+filter_training_dataset_by_type <- function(df) {
+  if (length(ACTIVE_TRAINING_TYPE_FILTER) == 0) {
+    return(df)
+  }
+
+  if (!"type" %in% names(df)) {
+    stop("TRAINING_TYPE_FILTER was set, but the training dataset has no 'type' column.", call. = FALSE)
+  }
+  if (!OUTCOME_COLUMN %in% names(df)) {
+    stop("Training dataset is missing the outcome column: ", OUTCOME_COLUMN, call. = FALSE)
+  }
+
+  event_rows <- !is.na(df[[OUTCOME_COLUMN]]) & df[[OUTCOME_COLUMN]] == EVENT_VALUE
+  keep_rows <- !event_rows | df$type %in% ACTIVE_TRAINING_TYPE_FILTER
+
+  before_rows <- nrow(df)
+  before_events <- sum(event_rows, na.rm = TRUE)
+  before_controls <- sum(df[[OUTCOME_COLUMN]] == CONTROL_VALUE, na.rm = TRUE)
+
+  filtered <- df[keep_rows, , drop = FALSE]
+  row.names(filtered) <- NULL
+
+  after_events <- sum(filtered[[OUTCOME_COLUMN]] == EVENT_VALUE, na.rm = TRUE)
+  after_controls <- sum(filtered[[OUTCOME_COLUMN]] == CONTROL_VALUE, na.rm = TRUE)
+
+  if (after_events == 0) {
+    stop(
+      "TRAINING_TYPE_FILTER removed all event rows. Requested type value(s): ",
+      paste(ACTIVE_TRAINING_TYPE_FILTER, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  if (after_controls == 0) {
+    stop("No control rows remain after applying TRAINING_TYPE_FILTER.", call. = FALSE)
+  }
+
+  message(
+    "Training type filter retained event type(s): ",
+    paste(ACTIVE_TRAINING_TYPE_FILTER, collapse = ", ")
+  )
+  message(
+    "Rows retained after training type filter: ",
+    format(nrow(filtered), big.mark = ","),
+    " of ",
+    format(before_rows, big.mark = ","),
+    "; events retained: ",
+    format(after_events, big.mark = ","),
+    " of ",
+    format(before_events, big.mark = ","),
+    "; controls retained: ",
+    format(after_controls, big.mark = ","),
+    " of ",
+    format(before_controls, big.mark = ",")
+  )
+
+  filtered
 }
 
 as_numeric_predictors <- function(df, predictor_names) {
@@ -355,6 +473,7 @@ fill_prediction_covariates_from_reference_years <- function(df, fill_rules) {
 }
 
 prepare_training_data <- function(training_df, prediction_df) {
+  training_df <- filter_training_dataset_by_type(training_df)
   predictor_names <- identify_predictors(training_df, prediction_df)
   training_df <- as_numeric_predictors(training_df, predictor_names)
   training_df <- fill_hansen_na_with_zero(training_df)
@@ -719,6 +838,12 @@ make_dir(OUTPUT_DIR)
 make_dir(PREDICTION_TABLE_DIR)
 make_dir(ANNUAL_SUMMARY_RASTER_DIR)
 make_dir(ANNUAL_SUMMARY_PLOT_DIR)
+
+message("Study-area analysis: ", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+message("Sub-analysis folder: ", ACTIVE_SUBANALYSIS_NAME)
+message("Analysis data directory: ", DATA_DIR)
+message("Model directory: ", MODEL_DIR)
+message("Output directory: ", OUTPUT_DIR)
 
 dataset2_raw <- utils::read.csv(TRAINING_CSV, stringsAsFactors = FALSE)
 prediction_grid_raw <- utils::read.csv(PREDICTION_GRID_CSV, stringsAsFactors = FALSE)

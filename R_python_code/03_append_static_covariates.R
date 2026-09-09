@@ -1,4 +1,4 @@
-#### 02b Append Static Raster Covariates ####
+#### 03 Append Static Raster Covariates ####
 
 # This script is the companion static-covariate step for the main 02 Google
 # Earth Engine extraction notebook. Use it for covariates that are static over
@@ -6,15 +6,16 @@
 # pulled from Google Earth Engine.
 #
 # Run the main 02_predGrid_trainSet_extraction.ipynb notebook first. After it
-# has created data/dataset2.csv and data/prediction_grid_covariates_2020_2025.csv,
-# run this 02b script to append local static covariate columns to both tables.
+# has created analyses/<STUDY_AREA_ANALYSIS_NAME>/data/dataset2.csv and
+# analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2020_2025.csv,
+# run this 03 script to append local static covariate columns to both tables.
 #
 # Expected inputs:
-#   data/dataset2.csv
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/dataset2.csv
 #     One row per training point-year with id, year, latitude, longitude,
 #     outcome, type, country, and all Google Earth Engine covariates.
 #
-#   data/prediction_grid_covariates_2020_2025.csv
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2020_2025.csv
 #     One row per prediction grid cell-year with grid_id, x, y, longitude,
 #     latitude, year, and all Google Earth Engine covariates.
 #
@@ -28,11 +29,11 @@
 #     OVERWRITE_STATIC_COVARIATES <- TRUE.
 #
 # Expected outputs:
-#   data/dataset2.csv
-#   data/prediction_grid_covariates_2020_2025.csv
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/dataset2.csv
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2020_2025.csv
 #     The same tables, overwritten with static covariate columns appended.
 #
-#   data/static_covariate_exports/*.csv
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/static_covariate_exports/*.csv
 #     Cached per-raster extraction tables. If a matching cache exists and
 #     OVERWRITE_STATIC_COVARIATES is FALSE, the extraction is skipped.
 #
@@ -82,8 +83,8 @@ find_code_dir <- function() {
   }
 
   stop(
-    "Could not locate the KSPH Code directory. Run this with source('R_python_code/02b_append_static_covariates.R') ",
-    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/02b_append_static_covariates.R') from the parent folder.",
+    "Could not locate the KSPH Code directory. Run this with source('R_python_code/03_append_static_covariates.R') ",
+    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/03_append_static_covariates.R') from the parent folder.",
     call. = FALSE
   )
 }
@@ -103,8 +104,50 @@ if (dir.exists(WINDOWS_USER_R_LIB) && !WINDOWS_USER_R_LIB %in% .libPaths()) {
   .libPaths(c(WINDOWS_USER_R_LIB, .libPaths()))
 }
 
-TRAINING_CSV <- file.path(CODE_DIR, "data", "dataset2.csv")
-PREDICTION_GRID_CSV <- file.path(CODE_DIR, "data", "prediction_grid_covariates_2020_2025.csv")
+sanitize_path_component <- function(value) {
+  value <- trimws(as.character(value))
+  value <- gsub("[^A-Za-z0-9]+", "_", value)
+  value <- gsub("^_+|_+$", "", value)
+  if (!nzchar(value)) {
+    stop("Analysis folder name cannot be blank after sanitizing.", call. = FALSE)
+  }
+  value
+}
+
+# STUDY_AREA_ANALYSIS_NAME chooses which study-area extraction products to
+# update. Static covariates are appended to:
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/dataset2.csv
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2020_2025.csv
+#
+# Example for a separate DRC run:
+#   STUDY_AREA_ANALYSIS_NAME <- "drc"
+STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
+ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
+ANALYSIS_DIR <- file.path(CODE_DIR, "analyses", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+DATA_DIR <- file.path(ANALYSIS_DIR, "data")
+
+# Keep FALSE for production-style runs. Set TRUE only for a one-time migration
+# check if you intentionally need to read old root-level KSPH Code/data files.
+ALLOW_LEGACY_PATH_FALLBACK <- FALSE
+
+# Optional migration fallback: if enabled and the new analysis data folder does
+# not contain completed equatorial Africa covariate files, use old root-level
+# files. DRC and other new study-area analyses never fall back.
+LEGACY_DATA_DIR <- file.path(CODE_DIR, "data")
+if (
+  isTRUE(ALLOW_LEGACY_PATH_FALLBACK) &&
+  identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa") &&
+    (!file.exists(file.path(DATA_DIR, "dataset2.csv")) ||
+       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "dataset2.csv")) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))
+) {
+  message("Using legacy root-level data folder because the equatorial Africa analysis data folder is not complete yet: ", LEGACY_DATA_DIR)
+  DATA_DIR <- LEGACY_DATA_DIR
+}
+
+TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
+PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv")
 PREDICTOR_LIST_CSV <- file.path(CODE_DIR, "config", "predictor_list.csv")
 
 # By default, the static raster folder lives inside the KSPH Code repo:
@@ -117,7 +160,7 @@ STATIC_COVARIATE_DIR <- Sys.getenv(
 )
 STATIC_COVARIATE_DIR <- normalizePath(STATIC_COVARIATE_DIR, winslash = "/", mustWork = FALSE)
 
-STATIC_COVARIATE_CACHE_DIR <- file.path(CODE_DIR, "data", "static_covariate_exports")
+STATIC_COVARIATE_CACHE_DIR <- file.path(DATA_DIR, "static_covariate_exports")
 STATIC_COVARIATE_MANIFEST_CSV <- file.path(
   STATIC_COVARIATE_CACHE_DIR,
   "static_covariate_manifest.csv"
@@ -502,6 +545,8 @@ require_package("terra")
 make_dir(STATIC_COVARIATE_CACHE_DIR)
 
 message("KSPH Code directory: ", CODE_DIR)
+message("Study-area analysis: ", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+message("Analysis data directory: ", DATA_DIR)
 message("Static covariate folder: ", STATIC_COVARIATE_DIR)
 message("Static covariate cache folder: ", STATIC_COVARIATE_CACHE_DIR)
 message("Overwrite cached static covariates: ", OVERWRITE_STATIC_COVARIATES)

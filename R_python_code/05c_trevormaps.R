@@ -1,7 +1,7 @@
-#### 04c Manuscript-Style Temporal Forward-Validation Maps ####
+#### 05c Manuscript-Style Temporal Forward-Validation Maps ####
 
 # This script reads the annual temporal-forward-validation prediction rasters
-# that were already produced by 03b_temporal_forward_validation_brt.R and writes
+# that were already produced by 04b_temporal_forward_validation_brt.R and writes
 # PowerPoint/manuscript-ready static maps.
 #
 # Each output PNG has two vertically stacked panels:
@@ -9,7 +9,7 @@
 #   2. the top 1% cells for that same value layer
 #
 # Outputs are written to:
-#   outputs/TrevorPowerpoint
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/tfv/<TEMPORAL_ANALYSIS_GROUP>/TrevorPowerpoint
 
 
 #### Configuration ####
@@ -49,8 +49,8 @@ find_code_dir <- function() {
   }
 
   stop(
-    "Could not locate the KSPH Code repo root. Run this with source('R_python_code/04c_trevormaps.R') ",
-    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/04c_trevormaps.R') from the parent folder.",
+    "Could not locate the KSPH Code repo root. Run this with source('R_python_code/05c_trevormaps.R') ",
+    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/05c_trevormaps.R') from the parent folder.",
     call. = FALSE
   )
 }
@@ -82,10 +82,30 @@ require_package("terra")
 require_package("sf")
 require_package("ggplot2")
 
+sanitize_path_component <- function(value) {
+  value <- trimws(as.character(value))
+  value <- gsub("[^A-Za-z0-9]+", "_", value)
+  value <- gsub("^_+|_+$", "", value)
+  if (!nzchar(value)) {
+    stop("Analysis folder name cannot be blank after sanitizing.", call. = FALSE)
+  }
+  value
+}
+
+existing_dir_or_first <- function(paths) {
+  existing <- paths[dir.exists(paths)]
+  if (length(existing) > 0) {
+    return(existing[1])
+  }
+  paths[1]
+}
+
+STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
 TEMPORAL_ANALYSIS_ROOT <- "tfv"
 TEMPORAL_ANALYSIS_GROUP <- "all_types"
 TEMPORAL_MAP_SET <- "maps_2022_2025"
 TEMPORAL_START_YEAR <- 2001L
+ALLOW_LEGACY_PATH_FALLBACK <- FALSE
 
 # Requested display years. The current temporal-forward-validation outputs on
 # this machine are 2022-2025; if 2021 rasters are unavailable, the script will
@@ -98,14 +118,23 @@ STOP_ON_MISSING_INPUTS <- FALSE
 # "min", and "max" if those layers exist in the rasters.
 SUMMARY_MEASURE <- "mean"
 
+ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
+TEMPORAL_ANALYSIS_GROUP <- sanitize_path_component(TEMPORAL_ANALYSIS_GROUP)
+ANALYSIS_DIR <- file.path(CODE_DIR, "analyses", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+LEGACY_PATH_FALLBACKS <- isTRUE(ALLOW_LEGACY_PATH_FALLBACK) && identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa")
+ANALYSIS_OUTPUT_DIR <- existing_dir_or_first(c(
+  file.path(ANALYSIS_DIR, "outputs"),
+  if (LEGACY_PATH_FALLBACKS) file.path(CODE_DIR, "outputs") else character(0)
+))
+
 AFRICA_COUNTRY_BORDER_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
-TEMPORAL_OUTPUT_BASE_DIR <- file.path(CODE_DIR, "outputs", TEMPORAL_ANALYSIS_ROOT, TEMPORAL_ANALYSIS_GROUP)
+TEMPORAL_OUTPUT_BASE_DIR <- file.path(ANALYSIS_OUTPUT_DIR, TEMPORAL_ANALYSIS_ROOT, TEMPORAL_ANALYSIS_GROUP)
 TEMPORAL_MAP_OUTPUT_DIR <- file.path(TEMPORAL_OUTPUT_BASE_DIR, TEMPORAL_MAP_SET)
-OUTPUT_DIR <- file.path(CODE_DIR, "outputs", "TrevorPowerpoint")
+OUTPUT_DIR <- file.path(TEMPORAL_OUTPUT_BASE_DIR, "TrevorPowerpoint")
 OUTPUT_MANIFEST_CSV <- file.path(OUTPUT_DIR, "trevorpowerpoint_map_manifest.csv")
 
 RASTER_CRS <- "EPSG:4326"
-MAP_LATITUDE_LIMITS <- c(-10, 10)
+MAP_LATITUDE_LIMITS <- if (identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa")) c(-10, 10) else NULL
 TOP_PERCENTILE <- 0.99
 ODDS_EPSILON <- 1e-6
 
@@ -340,6 +369,10 @@ raster_extent_limits <- function(raster_layer) {
 
 map_plot_extent <- function(raster_layer) {
   limits <- raster_extent_limits(raster_layer)
+  if (is.null(MAP_LATITUDE_LIMITS) || length(MAP_LATITUDE_LIMITS) < 2) {
+    return(terra::ext(limits[["xmin"]], limits[["xmax"]], limits[["ymin"]], limits[["ymax"]]))
+  }
+
   ymin <- MAP_LATITUDE_LIMITS[1]
   ymax <- MAP_LATITUDE_LIMITS[2]
 

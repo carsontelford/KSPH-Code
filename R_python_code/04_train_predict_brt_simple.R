@@ -1,8 +1,8 @@
-#### 03 Train BRT Ensemble And Predict Event Probability ####
+#### 04 Train BRT Ensemble And Predict Event Probability ####
 
 # This first modeling script intentionally keeps the workflow simple:
 #   1. read the completed training dataset
-#   2. create 10 sampled training datasets with 100 controls per event
+#   2. create sampled training datasets with a configured number of controls per event
 #   3. train one BRT model for each sampled dataset
 #   4. load the fitted model list and prediction-grid covariates
 #   5. predict each model over the prediction-grid data frame
@@ -47,8 +47,8 @@ find_code_dir <- function() {
   }
 
   stop(
-    "Could not locate the KSPH Code directory. Run this with source('R_python_code/03_train_predict_brt_simple.R') ",
-    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/03_train_predict_brt_simple.R') from the parent folder.",
+    "Could not locate the KSPH Code directory. Run this with source('R_python_code/04_train_predict_brt_simple.R') ",
+    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/04_train_predict_brt_simple.R') from the parent folder.",
     call. = FALSE
   )
 }
@@ -68,17 +68,23 @@ if (dir.exists(WINDOWS_USER_R_LIB) && !WINDOWS_USER_R_LIB %in% .libPaths()) {
   .libPaths(c(WINDOWS_USER_R_LIB, .libPaths()))
 }
 
-# Leave both as "" to use the current all-types workflow and existing folders:
-#   models
-#   outputs
-# Set TRAINING_TYPE_FILTER <- "Z" to fit the model only on type Z event
-# observations; all pseudo-absence/control rows are retained.
-# If TRAINING_TYPE_FILTER is set and ANALYSIS_NAME is left "", results are
-# written to models/type_Z and outputs/type_Z.
-ANALYSIS_NAME <- ""
+# STUDY_AREA_ANALYSIS_NAME chooses which extracted study-area dataset to read.
+# Each study area has its own generated data/models/outputs folder:
+#   analyses/equatorial_africa/
+#   analyses/drc/
+STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
+
+# SUBANALYSIS_NAME chooses where modeling results are saved within the selected
+# study-area analysis. Leave it "" for all event types; set
+# TRAINING_TYPE_FILTER <- "Z" to fit only type Z event observations while
+# retaining all pseudo-absence/control rows. If TRAINING_TYPE_FILTER is set and
+# SUBANALYSIS_NAME is left "", results are written to the type-derived folder
+# such as models/type_Z and outputs/type_Z.
+SUBANALYSIS_NAME <- ""
 TRAINING_TYPE_FILTER <- ""
 RUN_PERFORMANCE_EVALUATION <- TRUE
 RUN_PERFORMANCE_FIGURES <- TRUE
+ALLOW_LEGACY_PATH_FALLBACK <- FALSE
 
 trim_nonempty_values <- function(values) {
   if (is.null(values) || length(values) == 0) {
@@ -100,36 +106,50 @@ sanitize_path_component <- function(value) {
 }
 
 ACTIVE_TRAINING_TYPE_FILTER <- trim_nonempty_values(TRAINING_TYPE_FILTER)
-ACTIVE_ANALYSIS_NAME <- trim_nonempty_values(ANALYSIS_NAME)
-if (length(ACTIVE_ANALYSIS_NAME) > 1) {
-  stop("ANALYSIS_NAME must be a single value.", call. = FALSE)
+ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
+ACTIVE_SUBANALYSIS_NAME <- trim_nonempty_values(SUBANALYSIS_NAME)
+if (length(ACTIVE_SUBANALYSIS_NAME) > 1) {
+  stop("SUBANALYSIS_NAME must be a single value.", call. = FALSE)
 }
-if (length(ACTIVE_ANALYSIS_NAME) == 0 && length(ACTIVE_TRAINING_TYPE_FILTER) > 0) {
-  ACTIVE_ANALYSIS_NAME <- paste0(
+if (length(ACTIVE_SUBANALYSIS_NAME) == 0 && length(ACTIVE_TRAINING_TYPE_FILTER) > 0) {
+  ACTIVE_SUBANALYSIS_NAME <- paste0(
     "type_",
     paste(vapply(ACTIVE_TRAINING_TYPE_FILTER, sanitize_path_component, character(1)), collapse = "_")
   )
 }
-if (length(ACTIVE_ANALYSIS_NAME) == 1) {
-  ACTIVE_ANALYSIS_NAME <- sanitize_path_component(ACTIVE_ANALYSIS_NAME)
+if (length(ACTIVE_SUBANALYSIS_NAME) == 1) {
+  ACTIVE_SUBANALYSIS_NAME <- sanitize_path_component(ACTIVE_SUBANALYSIS_NAME)
 } else {
-  ACTIVE_ANALYSIS_NAME <- ""
+  ACTIVE_SUBANALYSIS_NAME <- "all_types"
 }
 
-TRAINING_CSV <- file.path(CODE_DIR, "data", "dataset2.csv")
-PREDICTION_GRID_CSV <- file.path(CODE_DIR, "data", "prediction_grid_covariates_2020_2025.csv")
+ANALYSIS_DIR <- file.path(CODE_DIR, "analyses", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+DATA_DIR <- file.path(ANALYSIS_DIR, "data")
+ANALYSIS_MODEL_DIR <- file.path(ANALYSIS_DIR, "models")
+ANALYSIS_OUTPUT_DIR <- file.path(ANALYSIS_DIR, "outputs")
+
+# Optional migration fallback: set ALLOW_LEGACY_PATH_FALLBACK <- TRUE only if
+# you intentionally need to read old root-level KSPH Code/data files. DRC and
+# other new study-area analyses never fall back.
+LEGACY_DATA_DIR <- file.path(CODE_DIR, "data")
+if (
+  isTRUE(ALLOW_LEGACY_PATH_FALLBACK) &&
+  identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa") &&
+    (!file.exists(file.path(DATA_DIR, "dataset2.csv")) ||
+       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "dataset2.csv")) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))
+) {
+  message("Using legacy root-level data folder because the equatorial Africa analysis data folder is not complete yet: ", LEGACY_DATA_DIR)
+  DATA_DIR <- LEGACY_DATA_DIR
+}
+
+TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
+PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv")
 AFRICA_COUNTRY_BORDER_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
 
-MODEL_DIR <- if (nzchar(ACTIVE_ANALYSIS_NAME)) {
-  file.path(CODE_DIR, "models", ACTIVE_ANALYSIS_NAME)
-} else {
-  file.path(CODE_DIR, "models")
-}
-OUTPUT_DIR <- if (nzchar(ACTIVE_ANALYSIS_NAME)) {
-  file.path(CODE_DIR, "outputs", ACTIVE_ANALYSIS_NAME)
-} else {
-  file.path(CODE_DIR, "outputs")
-}
+MODEL_DIR <- file.path(ANALYSIS_MODEL_DIR, ACTIVE_SUBANALYSIS_NAME)
+OUTPUT_DIR <- file.path(ANALYSIS_OUTPUT_DIR, ACTIVE_SUBANALYSIS_NAME)
 PREDICTION_TABLE_DIR <- file.path(OUTPUT_DIR, "predictions", "tables")
 ANNUAL_SUMMARY_RASTER_DIR <- file.path(OUTPUT_DIR, "predictions", "annual_summary_rasters")
 ANNUAL_SUMMARY_PLOT_DIR <- file.path(OUTPUT_DIR, "predictions", "annual_summary_plots")
@@ -254,7 +274,7 @@ MAP_GRID_LWD <- 0.6
 MAP_BORDER_COLOR <- "gray35"
 MAP_BORDER_LWD <- 0.7
 MAP_AXIS_CEX <- 0.9
-MAP_LATITUDE_LIMITS <- c(-10, 10)
+MAP_LATITUDE_LIMITS <- if (identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa")) c(-10, 10) else NULL
 DERIVED_GGPLOT_PNG_WIDTH <- 14
 DERIVED_GGPLOT_PNG_HEIGHT <- 15.5
 DERIVED_GGPLOT_PNG_DPI <- 300
@@ -549,6 +569,10 @@ extent_limits <- function(extent) {
 
 map_plot_extent <- function(raster_layer) {
   limits <- raster_extent_limits(raster_layer)
+  if (is.null(MAP_LATITUDE_LIMITS) || length(MAP_LATITUDE_LIMITS) < 2) {
+    return(terra::ext(limits[["xmin"]], limits[["xmax"]], limits[["ymin"]], limits[["ymax"]]))
+  }
+
   ymin <- MAP_LATITUDE_LIMITS[1]
   ymax <- MAP_LATITUDE_LIMITS[2]
 
@@ -3363,7 +3387,9 @@ make_dir(SHAP_DIR)
 make_dir(SHAP_TABLE_DIR)
 make_dir(PERFORMANCE_EVALUATION_DIR)
 
-message("Analysis folder: ", if (nzchar(ACTIVE_ANALYSIS_NAME)) ACTIVE_ANALYSIS_NAME else "default all-types folders")
+message("Study-area analysis: ", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+message("Sub-analysis folder: ", ACTIVE_SUBANALYSIS_NAME)
+message("Analysis data directory: ", DATA_DIR)
 message(
   "Training type filter: ",
   if (length(ACTIVE_TRAINING_TYPE_FILTER) > 0) paste(ACTIVE_TRAINING_TYPE_FILTER, collapse = ", ") else "all event types"
@@ -3538,7 +3564,7 @@ for (year in PREDICTION_YEARS) {
 # This extracts annual predictions back to the rows of dataset2 from the same
 # year, then evaluates ranking and thresholded classification performance.
 # Because this 03_ model is trained on the full dataset, these are apparent
-# in-sample metrics. Use 03b_ for held-forward temporal validation.
+# in-sample metrics. Use 04b_ for held-forward temporal validation.
 write_performance_outputs(dataset2, EVALUATION_YEARS)
 
 

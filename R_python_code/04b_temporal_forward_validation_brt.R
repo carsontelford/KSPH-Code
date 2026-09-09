@@ -1,4 +1,4 @@
-#### 03b Temporal Forward Validation BRT Ensemble ####
+#### 04b Temporal Forward Validation BRT Ensemble ####
 
 # This retrospective script emulates how the model would have been used over
 # time. For each target prediction year, it trains only on observations from
@@ -46,8 +46,8 @@ find_code_dir <- function() {
   }
 
   stop(
-    "Could not locate the KSPH Code directory. Run this with source('R_python_code/03b_temporal_forward_validation_brt.R') ",
-    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/03b_temporal_forward_validation_brt.R') from the parent folder.",
+    "Could not locate the KSPH Code directory. Run this with source('R_python_code/04b_temporal_forward_validation_brt.R') ",
+    "from the KSPH Code repo root, or source('KSPH Code/R_python_code/04b_temporal_forward_validation_brt.R') from the parent folder.",
     call. = FALSE
   )
 }
@@ -67,12 +67,19 @@ if (dir.exists(WINDOWS_USER_R_LIB) && !WINDOWS_USER_R_LIB %in% .libPaths()) {
   .libPaths(c(WINDOWS_USER_R_LIB, .libPaths()))
 }
 
-# Leave ANALYSIS_NAME as "" for the default temporal all-types run. Set
-# TRAINING_TYPE_FILTER <- "Z" to fit only on type Z event observations; all
-# pseudo-absence/control rows are retained.
-# Outputs are always written under temporal-forward-validation folders, so this
-# script does not overwrite the all-years outputs from 03_train_predict_brt_simple.R.
-ANALYSIS_NAME <- ""
+# STUDY_AREA_ANALYSIS_NAME chooses which extracted study-area dataset to read.
+# Each study area has its own generated data/models/outputs folder:
+#   analyses/equatorial_africa/
+#   analyses/drc/
+STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
+
+# SUBANALYSIS_NAME chooses where temporal-forward-validation results are saved
+# within the selected study-area analysis. Leave it "" for all event types; set
+# TRAINING_TYPE_FILTER <- "Z" to fit only type Z event observations while
+# retaining all pseudo-absence/control rows. If TRAINING_TYPE_FILTER is set and
+# SUBANALYSIS_NAME is left "", results are written to the type-derived folder,
+# e.g. outputs/tfv/type_Z.
+SUBANALYSIS_NAME <- ""
 TRAINING_TYPE_FILTER <- ""
 TEMPORAL_ANALYSIS_ROOT <- "tfv"
 TEMPORAL_START_YEAR <- 2001L
@@ -80,6 +87,7 @@ TEMPORAL_TARGET_YEARS <- 2022:2025
 RUN_TEMPORAL_PERFORMANCE_EVALUATION <- TRUE
 RUN_TEMPORAL_PERFORMANCE_FIGURES <- TRUE
 RUN_TEMPORAL_COMPARISON_MAP_OUTPUTS <- TRUE
+ALLOW_LEGACY_PATH_FALLBACK <- FALSE
 EVALUATION_YEARS <- TEMPORAL_TARGET_YEARS
 EVALUATION_PREDICTION_LAYER <- "pred_mean"
 EVALUATION_THRESHOLD_METHOD <- "maximize_sens_ppv_product"
@@ -107,24 +115,47 @@ sanitize_path_component <- function(value) {
 }
 
 ACTIVE_TRAINING_TYPE_FILTER <- trim_nonempty_values(TRAINING_TYPE_FILTER)
-ACTIVE_ANALYSIS_NAME <- trim_nonempty_values(ANALYSIS_NAME)
-if (length(ACTIVE_ANALYSIS_NAME) > 1) {
-  stop("ANALYSIS_NAME must be a single value.", call. = FALSE)
+ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
+ACTIVE_SUBANALYSIS_NAME <- trim_nonempty_values(SUBANALYSIS_NAME)
+if (length(ACTIVE_SUBANALYSIS_NAME) > 1) {
+  stop("SUBANALYSIS_NAME must be a single value.", call. = FALSE)
 }
-if (length(ACTIVE_ANALYSIS_NAME) == 0 && length(ACTIVE_TRAINING_TYPE_FILTER) > 0) {
-  ACTIVE_ANALYSIS_NAME <- paste0(
+if (length(ACTIVE_SUBANALYSIS_NAME) == 0 && length(ACTIVE_TRAINING_TYPE_FILTER) > 0) {
+  ACTIVE_SUBANALYSIS_NAME <- paste0(
     "type_",
     paste(vapply(ACTIVE_TRAINING_TYPE_FILTER, sanitize_path_component, character(1)), collapse = "_")
   )
 }
-if (length(ACTIVE_ANALYSIS_NAME) == 1) {
-  ACTIVE_ANALYSIS_NAME <- sanitize_path_component(ACTIVE_ANALYSIS_NAME)
+if (length(ACTIVE_SUBANALYSIS_NAME) == 1) {
+  ACTIVE_SUBANALYSIS_NAME <- sanitize_path_component(ACTIVE_SUBANALYSIS_NAME)
 } else {
-  ACTIVE_ANALYSIS_NAME <- ""
+  ACTIVE_SUBANALYSIS_NAME <- "all_types"
 }
-TEMPORAL_ANALYSIS_GROUP <- if (nzchar(ACTIVE_ANALYSIS_NAME)) ACTIVE_ANALYSIS_NAME else "all_types"
-TEMPORAL_MODEL_BASE_DIR <- file.path(CODE_DIR, "models", TEMPORAL_ANALYSIS_ROOT, TEMPORAL_ANALYSIS_GROUP)
-TEMPORAL_OUTPUT_BASE_DIR <- file.path(CODE_DIR, "outputs", TEMPORAL_ANALYSIS_ROOT, TEMPORAL_ANALYSIS_GROUP)
+
+ANALYSIS_DIR <- file.path(CODE_DIR, "analyses", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+DATA_DIR <- file.path(ANALYSIS_DIR, "data")
+ANALYSIS_MODEL_DIR <- file.path(ANALYSIS_DIR, "models")
+ANALYSIS_OUTPUT_DIR <- file.path(ANALYSIS_DIR, "outputs")
+
+# Optional migration fallback: set ALLOW_LEGACY_PATH_FALLBACK <- TRUE only if
+# you intentionally need to read old root-level KSPH Code/data files. DRC and
+# other new study-area analyses never fall back.
+LEGACY_DATA_DIR <- file.path(CODE_DIR, "data")
+if (
+  isTRUE(ALLOW_LEGACY_PATH_FALLBACK) &&
+  identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa") &&
+    (!file.exists(file.path(DATA_DIR, "dataset2.csv")) ||
+       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "dataset2.csv")) &&
+    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))
+) {
+  message("Using legacy root-level data folder because the equatorial Africa analysis data folder is not complete yet: ", LEGACY_DATA_DIR)
+  DATA_DIR <- LEGACY_DATA_DIR
+}
+
+TEMPORAL_ANALYSIS_GROUP <- ACTIVE_SUBANALYSIS_NAME
+TEMPORAL_MODEL_BASE_DIR <- file.path(ANALYSIS_MODEL_DIR, TEMPORAL_ANALYSIS_ROOT, TEMPORAL_ANALYSIS_GROUP)
+TEMPORAL_OUTPUT_BASE_DIR <- file.path(ANALYSIS_OUTPUT_DIR, TEMPORAL_ANALYSIS_ROOT, TEMPORAL_ANALYSIS_GROUP)
 TEMPORAL_RUN_INDEX_CSV <- file.path(TEMPORAL_OUTPUT_BASE_DIR, "tfv_runs.csv")
 TEMPORAL_EVALUATION_DIR <- file.path(TEMPORAL_OUTPUT_BASE_DIR, "eval")
 TEMPORAL_EVALUATION_POINT_PREDICTIONS_CSV <- file.path(
@@ -164,8 +195,8 @@ TEMPORAL_EVALUATION_PR_PNG <- file.path(
   "tfv_pr_curve_overall.png"
 )
 
-TRAINING_CSV <- file.path(CODE_DIR, "data", "dataset2.csv")
-PREDICTION_GRID_CSV <- file.path(CODE_DIR, "data", "prediction_grid_covariates_2020_2025.csv")
+TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
+PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv")
 AFRICA_COUNTRY_BORDER_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
 
 MODEL_DIR <- TEMPORAL_MODEL_BASE_DIR
@@ -251,7 +282,7 @@ MAP_GRID_LWD <- 0.6
 MAP_BORDER_COLOR <- "gray35"
 MAP_BORDER_LWD <- 0.7
 MAP_AXIS_CEX <- 0.9
-MAP_LATITUDE_LIMITS <- c(-10, 10)
+MAP_LATITUDE_LIMITS <- if (identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa")) c(-10, 10) else NULL
 DERIVED_GGPLOT_PNG_WIDTH <- 14
 DERIVED_GGPLOT_PNG_HEIGHT <- 15.5
 DERIVED_GGPLOT_PNG_DPI <- 300
@@ -735,6 +766,10 @@ extent_limits <- function(extent) {
 
 map_plot_extent <- function(raster_layer) {
   limits <- raster_extent_limits(raster_layer)
+  if (is.null(MAP_LATITUDE_LIMITS) || length(MAP_LATITUDE_LIMITS) < 2) {
+    return(terra::ext(limits[["xmin"]], limits[["xmax"]], limits[["ymin"]], limits[["ymax"]]))
+  }
+
   ymin <- MAP_LATITUDE_LIMITS[1]
   ymax <- MAP_LATITUDE_LIMITS[2]
 
@@ -3657,6 +3692,8 @@ if (RUN_TEMPORAL_PERFORMANCE_EVALUATION) {
 make_dir(TEMPORAL_MODEL_BASE_DIR)
 make_dir(TEMPORAL_OUTPUT_BASE_DIR)
 
+message("Study-area analysis: ", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+message("Analysis data directory: ", DATA_DIR)
 message("Temporal analysis group: ", TEMPORAL_ANALYSIS_GROUP)
 message(
   "Training type filter: ",
@@ -3851,7 +3888,7 @@ write_temporal_performance_outputs(dataset2_all, EVALUATION_YEARS)
 
 # This gathers the annual held-forward prediction rasters into one comparison
 # folder, then runs the same ROR, 1-year-change, top-1%, and static-map helpers
-# used by 03_train_predict_brt_simple.R.
+# used by 04_train_predict_brt_simple.R.
 write_temporal_comparison_map_outputs(EVALUATION_YEARS)
 
 message("Done.")

@@ -13,10 +13,17 @@
 !/config/**
 !/Static Covariates/
 !/Static Covariates/.gitkeep
+!/analyses/
+!/analyses/.gitkeep
 
 # Keep the static covariate folder in the repo, but never commit local rasters.
 /Static Covariates/*
 !/Static Covariates/.gitkeep
+
+# Keep the analyses scaffold in the repo, but never commit generated study-area
+# data, models, maps, rasters, reports, or Earth Engine manifests.
+/analyses/*
+!/analyses/.gitkeep
 
 # Ignore local R session artifacts.
 /R_python_code/.Rhistory

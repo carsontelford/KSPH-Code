@@ -4,7 +4,7 @@
 # Google Earth Engine covariate extraction step.
 #
 # Expected output:
-#   data/dataset1.csv
+#   analyses/<STUDY_AREA_ANALYSIS_NAME>/data/dataset1.csv
 #
 # Required columns in output:
 #   id, year, latitude, longitude, outcome
@@ -63,29 +63,62 @@ if (dir.exists(WINDOWS_USER_R_LIB) && !WINDOWS_USER_R_LIB %in% .libPaths()) {
   .libPaths(c(WINDOWS_USER_R_LIB, .libPaths()))
 }
 
-PRESENCE_CSV <- file.path(CODE_DIR, "config", "outcomes_csv.csv")
+sanitize_path_component <- function(value) {
+  value <- trimws(as.character(value))
+  value <- gsub("[^A-Za-z0-9]+", "_", value)
+  value <- gsub("^_+|_+$", "", value)
+  if (!nzchar(value)) {
+    stop("Analysis folder name cannot be blank after sanitizing.", call. = FALSE)
+  }
+  value
+}
 
-## change this to DRC shapefile for DRCborders.shp for DRC specific analysis ##
-# STUDY_AREA_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
-STUDY_AREA_FILE <- file.path(CODE_DIR, "config", "DRCborders.shp")
-
-OUTPUT_CSV <- file.path(CODE_DIR, "data", "dataset1.csv")
-
-N_PSEUDO_ABSENCE <- 1000
-ABSENCE_YEARS <- 2001:2025
-RANDOM_SEED <- 20260813
-SAMPLING_VERSION <- "pseudo_absence_random_v1"
-# STUDY_AREA_NAME <- "equatorial_africa" 
-STUDY_AREA_NAME <- "drc" 
-
+# STUDY_AREA_ANALYSIS_NAME controls where this study area's generated data are
+# saved. Use one value for the full equatorial Africa run and a different value
+# for a DRC-only run so the two extraction products never overwrite each other.
+#
+# Examples:
+#   STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
+#   STUDY_AREA_ANALYSIS_NAME <- "drc"
+STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
 
 # STUDY_AREA_FILE is the polygon used for pseudo-absence sampling. If
 # STUDY_AREA_BBOX is set, the polygon is clipped to this lon/lat box first.
 # Set STUDY_AREA_BBOX <- NULL to use the full extent of the provided polygon,
-# e.g. when a future analyst provides a country-specific shapefile in place of 
-# the africa_nolakes shapefile i am using.
-# STUDY_AREA_BBOX <- c(xmin = -15.5, ymin = -10.0, xmax = 51.0, ymax = 10.0)
-STUDY_AREA_BBOX <- NULL
+# for example when using a country-specific shapefile.
+STUDY_AREA_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
+STUDY_AREA_BBOX <- c(xmin = -15.5, ymin = -10.0, xmax = 51.0, ymax = 10.0)
+
+# DRC-only example:
+# STUDY_AREA_ANALYSIS_NAME <- "drc"
+# STUDY_AREA_FILE <- file.path(CODE_DIR, "config", "DRCborders.shp")
+# STUDY_AREA_BBOX <- NULL
+
+ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
+ANALYSIS_DIR <- file.path(CODE_DIR, "analyses", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+DATA_DIR <- file.path(ANALYSIS_DIR, "data")
+
+# Keep FALSE for production-style runs so the selected study-area analysis is
+# read explicitly from analyses/<STUDY_AREA_ANALYSIS_NAME>/data or config/.
+ALLOW_LEGACY_PATH_FALLBACK <- FALSE
+
+PRESENCE_CSV_CANDIDATES <- c(
+  file.path(DATA_DIR, "outcomes_csv.csv"),
+  if (isTRUE(ALLOW_LEGACY_PATH_FALLBACK)) file.path(CODE_DIR, "data", "outcomes_csv.csv") else character(0),
+  file.path(CODE_DIR, "config", "outcomes_csv.csv")
+)
+PRESENCE_CSV <- PRESENCE_CSV_CANDIDATES[file.exists(PRESENCE_CSV_CANDIDATES)][1]
+if (is.na(PRESENCE_CSV)) {
+  PRESENCE_CSV <- PRESENCE_CSV_CANDIDATES[1]
+}
+
+OUTPUT_CSV <- file.path(DATA_DIR, "dataset1.csv")
+
+N_PSEUDO_ABSENCE <- 10000
+ABSENCE_YEARS <- 2001:2025
+RANDOM_SEED <- 20260813
+SAMPLING_VERSION <- "pseudo_absence_random_v1"
+STUDY_AREA_NAME <- ACTIVE_STUDY_AREA_ANALYSIS_NAME
 
 FILTER_PRESENCES_TO_STUDY_AREA <- TRUE
 ALLOW_BBOX_FALLBACK <- FALSE
@@ -199,8 +232,8 @@ standardize_presence_columns <- function(df) {
 
   lon_candidates <- c("longitude", "lon", "long", "x")
   lat_candidates <- c("latitude", "lat", "y")
-  year_candidates <- c("year", "observation_year", "sighting_year")
-  id_candidates <- c("id", "record_id", "sighting_id")
+  year_candidates <- c("year", "observation_year", "event_year")
+  id_candidates <- c("id", "record_id", "event_id")
   type_candidates <- c("type", "report_type", "origin", "source_type")
   country_candidates <- c("country", "adm0", "country_name")
 
@@ -219,7 +252,7 @@ standardize_presence_columns <- function(df) {
   }
 
   out <- data.frame(
-    id = if (is.na(id_col)) sprintf("BF%05d", seq_len(nrow(df))) else as.character(df[[id_col]]),
+    id = if (is.na(id_col)) sprintf("EV%05d", seq_len(nrow(df))) else as.character(df[[id_col]]),
     year = as.integer(df[[year_col]]),
     latitude = as.numeric(df[[lat_col]]),
     longitude = as.numeric(df[[lon_col]]),
@@ -351,7 +384,8 @@ dir.create(dirname(OUTPUT_CSV), showWarnings = FALSE, recursive = TRUE)
 if (!file.exists(PRESENCE_CSV)) {
   stop(
     "Could not find outcomes CSV: ", PRESENCE_CSV,
-    "\nPlace the outcomes file at data/outcomes_csv.csv when running from the KSPH Code repo root.",
+    "\nPlace the outcomes file at analyses/", ACTIVE_STUDY_AREA_ANALYSIS_NAME,
+    "/data/outcomes_csv.csv or config/outcomes_csv.csv.",
     call. = FALSE
   )
 }
@@ -392,6 +426,8 @@ dataset1 <- dataset1[, c(
 utils::write.csv(dataset1, OUTPUT_CSV, row.names = FALSE)
 
 message("Wrote dataset1: ", OUTPUT_CSV)
+message("Study-area analysis: ", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+message("Analysis data directory: ", DATA_DIR)
 message("Study area name: ", STUDY_AREA_NAME)
 message("Study area file: ", STUDY_AREA_FILE)
 message("Study area bbox: ", format_study_area_bbox(normalize_study_area_bbox()))

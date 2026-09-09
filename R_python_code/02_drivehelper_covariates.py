@@ -18,9 +18,11 @@ import pandas as pd
 
 
 CODE_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = CODE_DIR / "data"
+DEFAULT_STUDY_AREA_ANALYSIS_NAME = "equatorial_africa"
+ANALYSIS_DIR = CODE_DIR / "analyses" / DEFAULT_STUDY_AREA_ANALYSIS_NAME
+DATA_DIR = ANALYSIS_DIR / "data"
 CONFIG_DIR = CODE_DIR / "config"
-OUTPUT_DIR = CODE_DIR / "outputs"
+OUTPUT_DIR = ANALYSIS_DIR / "outputs" / "extraction"
 
 STUDY_AREA_FILE = CONFIG_DIR / "africacountries_nolakes.shp"
 EXTERNAL_RASTERS_FILE = CONFIG_DIR / "external_rasters.csv"
@@ -66,13 +68,11 @@ MAX_CONTEXT_BUFFER_M = 100000
 EXTRACTION_LAT_BUFFER_DEGREES = 1.0
 BUFFER_GEOMETRY_ERROR_M = 100
 
-# Approximate ring radii in EPSG:4326 degrees. The 50_100km label is held
-# stable while the active test geometry uses a 75 km outer radius.
+# Approximate ring radii in EPSG:4326 degrees.
 SCALED_RINGS = [
     (0.000, 0.090, "0_10km"),
     (0.090, 0.225, "10_25km"),
     (0.225, 0.449, "25_50km"),
-    (0.449, 0.674, "50_100km"),
 ]
 NONSCALED_RINGS = [(0.000, 0.090, "0_10km")]
 
@@ -82,7 +82,6 @@ BUFFER_GEOMETRY_ERROR_BY_DISTANCE_DEG = {
     0.090: 0.0018,
     0.225: 0.0045,
     0.449: 0.0270,
-    0.674: 0.0719,
 }
 
 BASE_SCALED_BANDS = [
@@ -129,7 +128,6 @@ RING_EXTRACTION_SCALES_DEG = {
     "0_10km": 0.0018,
     "10_25km": 0.0045,
     "25_50km": 0.0180,
-    "50_100km": 0.0270,
 }
 
 _BASELINE_CACHE: dict[str, tuple[ee.Image, ee.Image]] = {}
