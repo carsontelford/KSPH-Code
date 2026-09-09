@@ -64,21 +64,29 @@ if (dir.exists(WINDOWS_USER_R_LIB) && !WINDOWS_USER_R_LIB %in% .libPaths()) {
 }
 
 PRESENCE_CSV <- file.path(CODE_DIR, "config", "outcomes_csv.csv")
-STUDY_AREA_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
+
+## change this to DRC shapefile for DRCborders.shp for DRC specific analysis ##
+# STUDY_AREA_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
+STUDY_AREA_FILE <- file.path(CODE_DIR, "config", "DRCborders.shp")
+
 OUTPUT_CSV <- file.path(CODE_DIR, "data", "dataset1.csv")
 
-N_PSEUDO_ABSENCE <- 5000
+N_PSEUDO_ABSENCE <- 1000
 ABSENCE_YEARS <- 2001:2025
 RANDOM_SEED <- 20260813
 SAMPLING_VERSION <- "pseudo_absence_random_v1"
-STUDY_AREA_NAME <- "equatorial_africa"
+# STUDY_AREA_NAME <- "equatorial_africa" 
+STUDY_AREA_NAME <- "drc" 
+
 
 # STUDY_AREA_FILE is the polygon used for pseudo-absence sampling. If
 # STUDY_AREA_BBOX is set, the polygon is clipped to this lon/lat box first.
 # Set STUDY_AREA_BBOX <- NULL to use the full extent of the provided polygon,
 # e.g. when a future analyst provides a country-specific shapefile in place of 
 # the africa_nolakes shapefile i am using.
-STUDY_AREA_BBOX <- c(xmin = -15.5, ymin = -10.0, xmax = 51.0, ymax = 10.0)
+# STUDY_AREA_BBOX <- c(xmin = -15.5, ymin = -10.0, xmax = 51.0, ymax = 10.0)
+STUDY_AREA_BBOX <- NULL
+
 FILTER_PRESENCES_TO_STUDY_AREA <- TRUE
 ALLOW_BBOX_FALLBACK <- FALSE
 
