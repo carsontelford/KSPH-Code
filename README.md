@@ -10,14 +10,16 @@ Prediction grid cells and pseudo-absence points are created inside the core stud
 
 - `R_python_code/`: R scripts plus Python notebooks/helpers that orchestrate Google Earth Engine exports.
 - `config/`: Africa no-lakes study-area shapefile, predictor list, and optional external raster config.
+- `Static Covariates/`: local static raster covariates supplied by the analyst. The folder is tracked, but raster files inside it are ignored by Git.
 - `data/`: local CSV inputs/outputs, created locally and ignored by Git.
 - `models/`: fitted model objects, created locally and ignored by Git.
 - `outputs/`: manifests, validation metrics, predictions, and rasters, created locally and ignored by Git.
 
 The GitHub repo is intentionally set up to track only `R_python_code/`,
-`config/`, `README.md`, and `.gitignore`. Generated covariate exports, fitted
-models, rasters, HTML reports, and local session files should be created on each
-analyst's machine and are ignored by `.gitignore`.
+`config/`, `Static Covariates/.gitkeep`, `README.md`, and `.gitignore`.
+Generated covariate exports, fitted models, rasters, HTML reports, and local
+session files should be created on each analyst's machine and are ignored by
+`.gitignore`.
 
 ## Pipeline
 
@@ -83,6 +85,23 @@ The active study-area controls live near the top of the notebook:
 
 Set `STUDY_AREA_BBOX = None` to use the full extent/polygon of a
 country-specific `STUDY_AREA_FILE`.
+
+### 2b. Append Static Local Covariates
+
+Copy any local static `.tif`/`.tiff` covariate rasters into:
+
+- `Static Covariates/`
+
+Then run:
+
+```r
+source("R_python_code/02b_append_static_covariates.R")
+```
+
+This samples each raster at the training and prediction-grid point locations,
+caches one extraction CSV per raster, appends matching covariate columns to
+`data/dataset2.csv` and `data/prediction_grid_covariates_2020_2025.csv`, and
+updates `config/predictor_list.csv`.
 
 ### 3. Train Full BRT Model And Predict Maps
 
@@ -169,7 +188,17 @@ The model predictor names live in:
 
 ## External Rasters
 
-To add external raster covariates, upload the raster to Earth Engine as an asset, then edit:
+There are two supported ways to add raster covariates.
+
+For local static rasters, copy `.tif`/`.tiff` files into:
+
+- `Static Covariates/`
+
+Then run `R_python_code/02b_append_static_covariates.R`. These files are not
+committed to Git.
+
+For rasters that should be extracted inside Earth Engine, upload the raster to
+Earth Engine as an asset, then edit:
 
 - `config/external_rasters.csv`
 

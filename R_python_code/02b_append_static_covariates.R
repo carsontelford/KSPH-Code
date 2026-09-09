@@ -1,7 +1,13 @@
 #### 02b Append Static Raster Covariates ####
 
-# This script appends static, local raster covariates to the completed training
-# and prediction-grid covariate tables produced by 02_predGrid_trainSet_extraction.
+# This script is the companion static-covariate step for the main 02 Google
+# Earth Engine extraction notebook. Use it for covariates that are static over
+# time and already exist as local .tif/.tiff rasters, rather than covariates
+# pulled from Google Earth Engine.
+#
+# Run the main 02_predGrid_trainSet_extraction.ipynb notebook first. After it
+# has created data/dataset2.csv and data/prediction_grid_covariates_2020_2025.csv,
+# run this 02b script to append local static covariate columns to both tables.
 #
 # Expected inputs:
 #   data/dataset2.csv
@@ -13,9 +19,13 @@
 #     latitude, year, and all Google Earth Engine covariates.
 #
 #   Static Covariates/*.tif
-#     Static raster covariates stored next to the KSPH Code folder by default.
+#     Static raster covariates stored in the KSPH Code repo folder by default.
 #     Each raster is sampled at the point location, and the sanitized raster
 #     file name becomes the covariate column name.
+#     To add more static covariates later, copy the additional .tif/.tiff files
+#     into this folder and rerun this script. New rasters will be extracted and
+#     cached; existing cached rasters will be skipped unless
+#     OVERWRITE_STATIC_COVARIATES <- TRUE.
 #
 # Expected outputs:
 #   data/dataset2.csv
@@ -28,6 +38,8 @@
 #
 # Notes for future analysts:
 #   - Add new .tif/.tiff rasters to the Static Covariates folder and rerun.
+#   - The Static Covariates folder is tracked in Git, but the raster files
+#     inside it are ignored so large local covariates are not pushed to GitHub.
 #   - Existing cached covariates are reused automatically.
 #   - If you replace a raster but keep the same file name, set
 #     OVERWRITE_STATIC_COVARIATES <- TRUE to refresh the cached values.
@@ -95,13 +107,13 @@ TRAINING_CSV <- file.path(CODE_DIR, "data", "dataset2.csv")
 PREDICTION_GRID_CSV <- file.path(CODE_DIR, "data", "prediction_grid_covariates_2020_2025.csv")
 PREDICTOR_LIST_CSV <- file.path(CODE_DIR, "config", "predictor_list.csv")
 
-# By default, the static raster folder lives next to KSPH Code:
-#   4ES Contracting/Static Covariates
+# By default, the static raster folder lives inside the KSPH Code repo:
+#   KSPH Code/Static Covariates
 # To use a different folder without editing this script, set a system
 # environment variable named STATIC_COVARIATE_DIR before running R.
 STATIC_COVARIATE_DIR <- Sys.getenv(
   "STATIC_COVARIATE_DIR",
-  unset = file.path(PROJECT_DIR, "Static Covariates")
+  unset = file.path(CODE_DIR, "Static Covariates")
 )
 STATIC_COVARIATE_DIR <- normalizePath(STATIC_COVARIATE_DIR, winslash = "/", mustWork = FALSE)
 

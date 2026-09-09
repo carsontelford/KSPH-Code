@@ -11,6 +11,12 @@
 !/R_python_code/**
 !/config/
 !/config/**
+!/Static Covariates/
+!/Static Covariates/.gitkeep
+
+# Keep the static covariate folder in the repo, but never commit local rasters.
+/Static Covariates/*
+!/Static Covariates/.gitkeep
 
 # Ignore local R session artifacts.
 /R_python_code/.Rhistory
