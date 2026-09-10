@@ -81,7 +81,7 @@ STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
 # SUBANALYSIS_NAME is left "", results are written to the type-derived folder
 # such as models/type_Z and outputs/type_Z.
 SUBANALYSIS_NAME <- ""
-TRAINING_TYPE_FILTER <- ""
+TRAINING_TYPE_FILTER <- "Z"
 RUN_PERFORMANCE_EVALUATION <- TRUE
 RUN_PERFORMANCE_FIGURES <- TRUE
 ALLOW_LEGACY_PATH_FALLBACK <- FALSE
@@ -171,6 +171,7 @@ PERFORMANCE_EVALUATION_DIR <- file.path(OUTPUT_DIR, "performance_evaluation")
 DSL_RDS <- file.path(MODEL_DIR, "dsl.rds")
 PREDICTOR_NAMES_RDS <- file.path(MODEL_DIR, "predictor_names.rds")
 PREDICTOR_NAMES_CSV <- file.path(MODEL_DIR, "predictor_names.csv")
+PREDICTOR_MISSINGNESS_REPORT_CSV <- file.path(MODEL_DIR, "predictor_missingness_report.csv")
 MODEL_LIST_RDS <- file.path(MODEL_DIR, "model_list.rds")
 MODEL_PREDICTION_TABLE_CSV <- file.path(
   PREDICTION_TABLE_DIR,
@@ -260,6 +261,9 @@ OVERWRITE_ANNUAL_SUMMARIES <- TRUE
 OVERWRITE_ANNUAL_SUMMARY_RASTERS <- TRUE
 OVERWRITE_ANNUAL_SUMMARY_PLOTS <- TRUE
 PREDICT_COMPLETE_CASES_ONLY <- TRUE
+DROP_HIGH_MISSING_PREDICTORS <- TRUE
+MAX_TRAINING_MISSING_PROP <- 0.20
+MAX_PREDICTION_GRID_MISSING_PROP <- 0.20
 PREDICTION_SUMMARY_COLUMNS <- c("pred_min", "pred_max", "pred_mean", "pred_median")
 DERIVED_SUMMARY_COLUMNS <- c("pred_min", "pred_median", "pred_mean", "pred_max")
 ODDS_EPSILON <- 1e-6
@@ -716,6 +720,75 @@ identify_predictors <- function(training_df, prediction_df) {
   }
 
   training_predictors
+}
+
+screen_predictors_by_missingness <- function(training_df, prediction_df, predictor_names) {
+  prediction_screen <- prediction_df
+  if ("year" %in% names(prediction_screen)) {
+    prediction_screen <- prediction_screen[prediction_screen$year %in% PREDICTION_YEARS, , drop = FALSE]
+  }
+  if (nrow(prediction_screen) == 0) {
+    stop("No prediction-grid rows are available for predictor missingness screening.", call. = FALSE)
+  }
+
+  training_missing_count <- vapply(training_df[predictor_names], function(x) sum(is.na(x)), integer(1))
+  prediction_missing_count <- vapply(prediction_screen[predictor_names], function(x) sum(is.na(x)), integer(1))
+  training_missing_prop <- training_missing_count / nrow(training_df)
+  prediction_missing_prop <- prediction_missing_count / nrow(prediction_screen)
+
+  exclusion_reason <- vapply(
+    seq_along(predictor_names),
+    function(i) {
+      reasons <- character(0)
+      if (training_missing_prop[[i]] > MAX_TRAINING_MISSING_PROP) {
+        reasons <- c(reasons, sprintf("training_missing_gt_%s", MAX_TRAINING_MISSING_PROP))
+      }
+      if (prediction_missing_prop[[i]] > MAX_PREDICTION_GRID_MISSING_PROP) {
+        reasons <- c(reasons, sprintf("prediction_grid_missing_gt_%s", MAX_PREDICTION_GRID_MISSING_PROP))
+      }
+      paste(reasons, collapse = "; ")
+    },
+    character(1)
+  )
+
+  include_in_model <- !nzchar(exclusion_reason)
+  if (!DROP_HIGH_MISSING_PREDICTORS) {
+    include_in_model[] <- TRUE
+  }
+
+  report <- data.frame(
+    predictor = predictor_names,
+    training_rows = nrow(training_df),
+    training_missing_count = as.integer(training_missing_count),
+    training_missing_prop = as.numeric(training_missing_prop),
+    prediction_grid_rows = nrow(prediction_screen),
+    prediction_grid_missing_count = as.integer(prediction_missing_count),
+    prediction_grid_missing_prop = as.numeric(prediction_missing_prop),
+    included_in_model = include_in_model,
+    exclusion_reason = ifelse(include_in_model, "", exclusion_reason),
+    stringsAsFactors = FALSE
+  )
+  dir.create(dirname(PREDICTOR_MISSINGNESS_REPORT_CSV), showWarnings = FALSE, recursive = TRUE)
+  utils::write.csv(report, PREDICTOR_MISSINGNESS_REPORT_CSV, row.names = FALSE)
+  message("Saved predictor missingness report: ", PREDICTOR_MISSINGNESS_REPORT_CSV)
+
+  dropped <- report$predictor[!report$included_in_model]
+  if (length(dropped) > 0) {
+    message(
+      "Dropped ", length(dropped), " predictor(s) above missingness thresholds ",
+      "(training > ", 100 * MAX_TRAINING_MISSING_PROP,
+      "% or prediction grid > ", 100 * MAX_PREDICTION_GRID_MISSING_PROP,
+      "%): ",
+      paste(dropped, collapse = ", ")
+    )
+  }
+
+  kept <- report$predictor[report$included_in_model]
+  if (length(kept) == 0) {
+    stop("Predictor missingness screen removed all predictors.", call. = FALSE)
+  }
+
+  kept
 }
 
 check_training_dataset <- function(df, predictor_names) {
@@ -3406,6 +3479,8 @@ dataset2 <- as_numeric_predictors(dataset2, predictor_names)
 prediction_grid <- as_numeric_predictors(prediction_grid, predictor_names)
 dataset2 <- fill_hansen_land_na_with_zero(dataset2)
 prediction_grid <- fill_hansen_land_na_with_zero(prediction_grid)
+prediction_grid <- fill_prediction_covariates_from_reference_years(prediction_grid, LATEST_AVAILABLE_COVARIATE_FILLS)
+predictor_names <- screen_predictors_by_missingness(dataset2, prediction_grid, predictor_names)
 prediction_grid <- add_country_to_prediction_grid(prediction_grid)
 dataset2[[OUTCOME_COLUMN]] <- as.integer(dataset2[[OUTCOME_COLUMN]])
 

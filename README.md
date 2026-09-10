@@ -195,6 +195,12 @@ The script creates sampled control/event training datasets, fits the BRT
 ensemble, predicts over the prediction-grid table, rasterizes annual summaries,
 and creates derived ROR/change outputs and model diagnostics.
 
+At the start of modeling, predictors are screened for excessive missingness
+after the Hansen zero-fill rules are applied. By default, any predictor with
+more than 20% missingness in either the filtered training data or selected
+prediction-grid rows is excluded from that model run. The audit file is saved
+as `models/<SUBANALYSIS_NAME>/predictor_missingness_report.csv`.
+
 ### 4b. Temporal Forward Validation
 
 ```r
@@ -207,6 +213,10 @@ Outputs:
 
 This retrospective workflow trains only on years before each target year, then
 predicts the held-forward year.
+
+The same predictor missingness screen is applied once before the forward-year
+fits, and its audit file is saved under
+`models/tfv/<SUBANALYSIS_NAME>/predictor_missingness_report.csv`.
 
 ### 5. Interactive Reports
 
@@ -231,6 +241,10 @@ For reports, set `STUDY_AREA_ANALYSIS_NAME` to choose the extracted study area,
 ```r
 source("R_python_code/06_train_predict_SuperLearner_CV.R")
 ```
+
+This prototype uses the same predictor missingness screen before median
+imputation, so high-missing static covariates are dropped rather than filled
+across places where the source raster does not exist.
 
 ## Core Covariates
 

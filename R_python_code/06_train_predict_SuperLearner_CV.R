@@ -136,6 +136,7 @@ ANNUAL_SUMMARY_PLOT_DIR <- file.path(OUTPUT_DIR, "annual_summary_plots")
 
 PREDICTOR_NAMES_RDS <- file.path(MODEL_DIR, "predictor_names.rds")
 PREDICTOR_NAMES_CSV <- file.path(MODEL_DIR, "predictor_names.csv")
+PREDICTOR_MISSINGNESS_REPORT_CSV <- file.path(MODEL_DIR, "predictor_missingness_report.csv")
 CLEAN_TRAINING_CSV <- file.path(MODEL_DIR, "training_model_matrix.csv")
 IMPUTATION_VALUES_RDS <- file.path(MODEL_DIR, "predictor_imputation_values.rds")
 IMPUTATION_VALUES_CSV <- file.path(MODEL_DIR, "predictor_imputation_values.csv")
@@ -199,6 +200,9 @@ OVERWRITE_MODEL_PREDICTION_TABLE <- TRUE
 OVERWRITE_ANNUAL_SUMMARIES <- TRUE
 OVERWRITE_ANNUAL_SUMMARY_RASTERS <- TRUE
 OVERWRITE_ANNUAL_SUMMARY_PLOTS <- TRUE
+DROP_HIGH_MISSING_PREDICTORS <- TRUE
+MAX_TRAINING_MISSING_PROP <- 0.20
+MAX_PREDICTION_GRID_MISSING_PROP <- 0.20
 PREDICTION_COLUMNS <- "pred_superlearner"
 PREDICTION_SUMMARY_COLUMNS <- c("pred_min", "pred_max", "pred_mean", "pred_median")
 
@@ -339,6 +343,75 @@ fill_hansen_na_with_zero <- function(df) {
   df
 }
 
+screen_predictors_by_missingness <- function(training_df, prediction_df, predictor_names) {
+  prediction_screen <- prediction_df
+  if ("year" %in% names(prediction_screen)) {
+    prediction_screen <- prediction_screen[prediction_screen$year %in% PREDICTION_YEARS, , drop = FALSE]
+  }
+  if (nrow(prediction_screen) == 0) {
+    stop("No prediction-grid rows are available for predictor missingness screening.", call. = FALSE)
+  }
+
+  training_missing_count <- vapply(training_df[predictor_names], function(x) sum(is.na(x)), integer(1))
+  prediction_missing_count <- vapply(prediction_screen[predictor_names], function(x) sum(is.na(x)), integer(1))
+  training_missing_prop <- training_missing_count / nrow(training_df)
+  prediction_missing_prop <- prediction_missing_count / nrow(prediction_screen)
+
+  exclusion_reason <- vapply(
+    seq_along(predictor_names),
+    function(i) {
+      reasons <- character(0)
+      if (training_missing_prop[[i]] > MAX_TRAINING_MISSING_PROP) {
+        reasons <- c(reasons, sprintf("training_missing_gt_%s", MAX_TRAINING_MISSING_PROP))
+      }
+      if (prediction_missing_prop[[i]] > MAX_PREDICTION_GRID_MISSING_PROP) {
+        reasons <- c(reasons, sprintf("prediction_grid_missing_gt_%s", MAX_PREDICTION_GRID_MISSING_PROP))
+      }
+      paste(reasons, collapse = "; ")
+    },
+    character(1)
+  )
+
+  include_in_model <- !nzchar(exclusion_reason)
+  if (!DROP_HIGH_MISSING_PREDICTORS) {
+    include_in_model[] <- TRUE
+  }
+
+  report <- data.frame(
+    predictor = predictor_names,
+    training_rows = nrow(training_df),
+    training_missing_count = as.integer(training_missing_count),
+    training_missing_prop = as.numeric(training_missing_prop),
+    prediction_grid_rows = nrow(prediction_screen),
+    prediction_grid_missing_count = as.integer(prediction_missing_count),
+    prediction_grid_missing_prop = as.numeric(prediction_missing_prop),
+    included_in_model = include_in_model,
+    exclusion_reason = ifelse(include_in_model, "", exclusion_reason),
+    stringsAsFactors = FALSE
+  )
+  dir.create(dirname(PREDICTOR_MISSINGNESS_REPORT_CSV), showWarnings = FALSE, recursive = TRUE)
+  utils::write.csv(report, PREDICTOR_MISSINGNESS_REPORT_CSV, row.names = FALSE)
+  message("Saved predictor missingness report: ", PREDICTOR_MISSINGNESS_REPORT_CSV)
+
+  dropped <- report$predictor[!report$included_in_model]
+  if (length(dropped) > 0) {
+    message(
+      "Dropped ", length(dropped), " predictor(s) above missingness thresholds ",
+      "(training > ", 100 * MAX_TRAINING_MISSING_PROP,
+      "% or prediction grid > ", 100 * MAX_PREDICTION_GRID_MISSING_PROP,
+      "%): ",
+      paste(dropped, collapse = ", ")
+    )
+  }
+
+  kept <- report$predictor[report$included_in_model]
+  if (length(kept) == 0) {
+    stop("Predictor missingness screen removed all predictors.", call. = FALSE)
+  }
+
+  kept
+}
+
 fit_imputation_values <- function(df, predictor_names) {
   imputation_values <- vapply(
     predictor_names,
@@ -476,7 +549,12 @@ prepare_training_data <- function(training_df, prediction_df) {
   training_df <- filter_training_dataset_by_type(training_df)
   predictor_names <- identify_predictors(training_df, prediction_df)
   training_df <- as_numeric_predictors(training_df, predictor_names)
+  prediction_screen <- prediction_df[prediction_df$year %in% PREDICTION_YEARS, , drop = FALSE]
+  prediction_screen <- as_numeric_predictors(prediction_screen, predictor_names)
   training_df <- fill_hansen_na_with_zero(training_df)
+  prediction_screen <- fill_hansen_na_with_zero(prediction_screen)
+  prediction_screen <- fill_prediction_covariates_from_reference_years(prediction_screen, LATEST_AVAILABLE_COVARIATE_FILLS)
+  predictor_names <- screen_predictors_by_missingness(training_df, prediction_screen, predictor_names)
   imputation_values <- fit_imputation_values(training_df, predictor_names)
   training_df <- apply_imputation_values(training_df, predictor_names, imputation_values, "training")
   training_df[[OUTCOME_COLUMN]] <- as.integer(training_df[[OUTCOME_COLUMN]])
