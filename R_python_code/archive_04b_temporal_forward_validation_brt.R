@@ -145,9 +145,9 @@ if (
   isTRUE(ALLOW_LEGACY_PATH_FALLBACK) &&
   identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa") &&
     (!file.exists(file.path(DATA_DIR, "dataset2.csv")) ||
-       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))) &&
+       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2021_2025.csv"))) &&
     file.exists(file.path(LEGACY_DATA_DIR, "dataset2.csv")) &&
-    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))
+    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2021_2025.csv"))
 ) {
   message("Using legacy root-level data folder because the equatorial Africa analysis data folder is not complete yet: ", LEGACY_DATA_DIR)
   DATA_DIR <- LEGACY_DATA_DIR
@@ -196,7 +196,7 @@ TEMPORAL_EVALUATION_PR_PNG <- file.path(
 )
 
 TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
-PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv")
+PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2021_2025.csv")
 AFRICA_COUNTRY_BORDER_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
 
 MODEL_DIR <- TEMPORAL_MODEL_BASE_DIR

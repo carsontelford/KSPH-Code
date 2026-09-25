@@ -136,16 +136,16 @@ if (
   isTRUE(ALLOW_LEGACY_PATH_FALLBACK) &&
   identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa") &&
     (!file.exists(file.path(DATA_DIR, "dataset2.csv")) ||
-       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))) &&
+       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2021_2025.csv"))) &&
     file.exists(file.path(LEGACY_DATA_DIR, "dataset2.csv")) &&
-    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))
+    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2021_2025.csv"))
 ) {
   message("Using legacy root-level data folder because the equatorial Africa analysis data folder is not complete yet: ", LEGACY_DATA_DIR)
   DATA_DIR <- LEGACY_DATA_DIR
 }
 
 TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
-PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv")
+PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2021_2025.csv")
 AFRICA_COUNTRY_BORDER_FILE <- file.path(CODE_DIR, "config", "africacountries_nolakes.shp")
 
 MODEL_DIR <- file.path(ANALYSIS_MODEL_DIR, ACTIVE_SUBANALYSIS_NAME)
@@ -175,27 +175,27 @@ PREDICTOR_MISSINGNESS_REPORT_CSV <- file.path(MODEL_DIR, "predictor_missingness_
 MODEL_LIST_RDS <- file.path(MODEL_DIR, "model_list.rds")
 MODEL_PREDICTION_TABLE_CSV <- file.path(
   PREDICTION_TABLE_DIR,
-  "prediction_grid_model_predictions_2020_2025.csv"
+  "prediction_grid_model_predictions_2021_2025.csv"
 )
 ANNUAL_SUMMARY_PREDICTION_CSV <- file.path(
   PREDICTION_TABLE_DIR,
-  "prediction_grid_prediction_summaries_2020_2025.csv"
+  "prediction_grid_prediction_summaries_2021_2025.csv"
 )
 SHAP_MEAN_TABLE_CSV <- file.path(
   SHAP_TABLE_DIR,
-  "prediction_grid_mean_shap_2020_2025.csv"
+  "prediction_grid_mean_shap_2021_2025.csv"
 )
 SHAP_COMPLETE_TABLE_CSV <- file.path(
   SHAP_TABLE_DIR,
-  "prediction_grid_predictions_with_mean_shap_2020_2025.csv"
+  "prediction_grid_predictions_with_mean_shap_2021_2025.csv"
 )
 SHAP_CHANGE_TABLE_CSV <- file.path(
   SHAP_TABLE_DIR,
-  "prediction_grid_mean_shap_changes_2021_2025.csv"
+  "prediction_grid_mean_shap_changes_2022_2025.csv"
 )
 PERFORMANCE_EVALUATION_POINT_PREDICTIONS_CSV <- file.path(
   PERFORMANCE_EVALUATION_DIR,
-  "apparent_training_point_predictions_2020_2025.csv"
+  "apparent_training_point_predictions_2021_2025.csv"
 )
 PERFORMANCE_EVALUATION_METRICS_BY_YEAR_CSV <- file.path(
   PERFORMANCE_EVALUATION_DIR,
@@ -247,7 +247,7 @@ BAG_FRACTION <- 0.7
 N_FOLDS <- 10
 BRT_FAMILY <- "bernoulli"
 
-PREDICTION_YEARS <- 2020:2025
+PREDICTION_YEARS <- 2021:2025
 EVALUATION_YEARS <- PREDICTION_YEARS
 EVALUATION_PREDICTION_LAYER <- "pred_mean"
 EVALUATION_THRESHOLD_METHOD <- "maximize_sens_ppv_product"
@@ -1792,7 +1792,14 @@ write_caret_performance_outputs <- function(point_predictions) {
   row.names(by_year) <- NULL
   overall <- caret_metrics_table(point_predictions, label = "overall", year = NA_integer_)
 
-  print_caret_confusion_matrix(point_predictions, "overall apparent 2020-2025 training-point performance")
+  print_caret_confusion_matrix(
+    point_predictions,
+    sprintf(
+      "overall apparent %s-%s training-point performance",
+      min(EVALUATION_YEARS),
+      max(EVALUATION_YEARS)
+    )
+  )
   for (year in sort(unique(point_predictions$year))) {
     print_caret_confusion_matrix(
       point_predictions[point_predictions$year == year, , drop = FALSE],

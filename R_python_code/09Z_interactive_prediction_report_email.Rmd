@@ -1,0 +1,537 @@
+---
+title: "Interactive Final SuperLearner Event Prediction Report: Type Z"
+author: "Event ENM workflow"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 11,
+  fig.height = 3.75,
+  dpi = 150,
+  out.width = "100%"
+)
+
+# Help R find packages installed in the per-user Windows library, e.g. R/win-library/4.6.
+LOCALAPPDATA_DIR <- normalizePath(Sys.getenv("LOCALAPPDATA"), winslash = "/", mustWork = FALSE)
+WINDOWS_USER_R_LIB <- file.path(
+  LOCALAPPDATA_DIR,
+  "R",
+  "win-library",
+  paste(R.version$major, strsplit(R.version$minor, "\\.")[[1]][1], sep = ".")
+)
+if (dir.exists(WINDOWS_USER_R_LIB) && !WINDOWS_USER_R_LIB %in% .libPaths()) {
+  .libPaths(c(WINDOWS_USER_R_LIB, .libPaths()))
+}
+
+required_packages <- c("leaflet", "terra", "htmltools", "htmlwidgets")
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages) > 0) {
+  stop("Install required packages before knitting this report: ", paste(missing_packages, collapse = ", "), call. = FALSE)
+}
+
+library(leaflet)
+library(htmltools)
+
+get_current_script_path <- function() {
+  command_args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", command_args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(normalizePath(sub("^--file=", "", file_arg[1]), winslash = "/", mustWork = TRUE))
+  }
+  for (frame in rev(sys.frames())) {
+    if (!is.null(frame$ofile)) {
+      return(normalizePath(frame$ofile, winslash = "/", mustWork = TRUE))
+    }
+  }
+  if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+    active_doc <- tryCatch(rstudioapi::getActiveDocumentContext()$path, error = function(e) NA_character_)
+    if (!is.na(active_doc) && nzchar(active_doc)) {
+      return(normalizePath(active_doc, winslash = "/", mustWork = TRUE))
+    }
+  }
+  NA_character_
+}
+
+find_code_dir <- function() {
+  script_path <- get_current_script_path()
+  wd <- normalizePath(getwd(), winslash = "/", mustWork = FALSE)
+  script_dir <- if (!is.na(script_path)) dirname(script_path) else NA_character_
+  wd_parents <- normalizePath(
+    file.path(wd, c(".", "..", "../..", "../../..")),
+    winslash = "/",
+    mustWork = FALSE
+  )
+  script_candidates <- if (!is.na(script_dir)) {
+    normalizePath(file.path(script_dir, c(".", "..", "../..")), winslash = "/", mustWork = FALSE)
+  } else {
+    character(0)
+  }
+  candidates <- unique(normalizePath(c(script_candidates, wd_parents, file.path(wd_parents, "KSPH Code")), winslash = "/", mustWork = FALSE))
+  for (candidate in candidates) {
+    if (
+      file.exists(file.path(candidate, "config", "predictor_list.csv")) &&
+      dir.exists(file.path(candidate, "R_python_code"))
+    ) {
+      return(candidate)
+    }
+  }
+  stop(
+    "Could not locate the KSPH Code repo root. Knit this report from inside the KSPH Code project, ",
+    "or set CODE_DIR manually near the top of 09Z_interactive_prediction_report_email.Rmd.",
+    call. = FALSE
+  )
+}
+
+sanitize_path_component <- function(value) {
+  value <- trimws(as.character(value))
+  value <- gsub("[^A-Za-z0-9]+", "_", value)
+  value <- gsub("^_+|_+$", "", value)
+  if (!nzchar(value)) {
+    stop("Analysis folder name cannot be blank after sanitizing.", call. = FALSE)
+  }
+  value
+}
+
+existing_path <- function(paths) {
+  normalized <- normalizePath(paths, winslash = "/", mustWork = FALSE)
+  found <- normalized[file.exists(normalized)]
+  if (length(found) == 0) {
+    return(NA_character_)
+  }
+  found[1]
+}
+
+CODE_DIR <- find_code_dir()
+
+STUDY_AREA_ANALYSIS_NAME <- "equatorial_africa"
+FINAL_ANALYSIS_GROUP <- "type_Z"
+FINAL_MODEL_FAMILY_NAME <- "final_sl"
+MAP_SET_NAME <- "maps"
+
+ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
+FINAL_ANALYSIS_GROUP <- sanitize_path_component(FINAL_ANALYSIS_GROUP)
+ANALYSIS_DIR <- file.path(CODE_DIR, "analyses", ACTIVE_STUDY_AREA_ANALYSIS_NAME)
+DATA_DIR <- file.path(ANALYSIS_DIR, "data")
+ANALYSIS_OUTPUT_DIR <- file.path(ANALYSIS_DIR, "outputs")
+PREDICTION_DIR <- file.path(
+  ANALYSIS_OUTPUT_DIR,
+  FINAL_MODEL_FAMILY_NAME,
+  FINAL_ANALYSIS_GROUP,
+  MAP_SET_NAME,
+  "pred"
+)
+
+discover_raster_years <- function(subdir, pattern, replacement = "\\1") {
+  paths <- list.files(file.path(PREDICTION_DIR, subdir), pattern = pattern, full.names = FALSE)
+  years <- suppressWarnings(as.integer(sub(pattern, replacement, paths)))
+  sort(unique(years[is.finite(years)]))
+}
+
+PREDICTION_YEARS <- discover_raster_years("ror", "^ror_([0-9]{4})\\.tif$")
+ANOMALY_YEARS <- discover_raster_years("hist_anom", "^hist_anom_([0-9]{4})\\.tif$")
+MAP_OPACITY_VALUE <- 0.72
+MAP_OPACITY_TOP1 <- 0.92
+LEAFLET_MAP_HEIGHT <- "300px"
+LEAFLET_NA_COLOR <- "#00000000"
+
+OUTCOMES_CSV_CANDIDATES <- c(
+  file.path(DATA_DIR, "outcomes_csv.csv"),
+  file.path(CODE_DIR, "config", "outcomes_csv.csv")
+)
+EVENT_OVERLAY_GROUP <- "Event locations"
+EVENT_POINT_RADIUS <- 4.5
+EVENT_COLOR_2026 <- "#00FFFF"
+EVENT_COLOR_2025 <- "#FF1493"
+EVENT_COLOR_OTHER <- "#000000"
+
+ROR_BREAKPOINTS <- c(0.4, 0.7, 1.5, 5, 15)
+CHANGE_RATIO_BREAKPOINTS <- c(0.5, 0.7, 1.3, 1.5, 2)
+ROR_VALUE_COLORS <- c("green4", "lightgreen", "white", "red", "darkred", "purple4")
+CHANGE_RATIO_VALUE_COLORS <- c("blue3", "lightblue", "white", "orange1", "red2", "red4")
+TOP_PERCENTILE_COLOR <- "red"
+
+raster_cache <- new.env(parent = emptyenv())
+
+event_report_products <- list(
+  ror = list(
+    label = "Relative odds ratio",
+    years = PREDICTION_YEARS,
+    year_label = function(year) as.character(year),
+    raster_path = function(year) {
+      file.path(PREDICTION_DIR, "ror", sprintf("ror_%s.tif", year))
+    },
+    value_layer = "ROR_mean",
+    top_layer = "ROR_mean_top1pct",
+    breakpoints = ROR_BREAKPOINTS,
+    colors = ROR_VALUE_COLORS,
+    legend_title = "Mean ROR",
+    top_legend_title = "Top 1% ROR"
+  ),
+  ror_anomaly = list(
+    label = "Historical ROR anomaly ratio",
+    years = ANOMALY_YEARS,
+    year_label = function(year) as.character(year),
+    raster_path = function(year) {
+      file.path(PREDICTION_DIR, "hist_anom", sprintf("hist_anom_%s.tif", year))
+    },
+    value_layer = "histROR_anomaly_mean",
+    top_layer = "histROR_anomaly_mean_top1pct",
+    breakpoints = CHANGE_RATIO_BREAKPOINTS,
+    colors = CHANGE_RATIO_VALUE_COLORS,
+    legend_title = "Mean ratio",
+    top_legend_title = "Top 1% anomaly ratios"
+  )
+)
+
+available_years <- function(product) {
+  product$years[vapply(product$years, function(year) file.exists(product$raster_path(year)), logical(1))]
+}
+
+missing_products <- names(event_report_products)[
+  vapply(event_report_products, function(product) length(available_years(product)) == 0, logical(1))
+]
+if (length(missing_products) > 0) {
+  stop(
+    "No raster files were found for report product(s): ",
+    paste(missing_products, collapse = ", "),
+    ". Run 08_train_predict_full_superlearner_historical_anomaly.R first.",
+    call. = FALSE
+  )
+}
+
+read_report_raster <- function(product_id, year) {
+  cache_key <- paste(product_id, year, sep = "_")
+  if (exists(cache_key, envir = raster_cache, inherits = FALSE)) {
+    return(get(cache_key, envir = raster_cache))
+  }
+  product <- event_report_products[[product_id]]
+  path <- product$raster_path(year)
+  if (!file.exists(path)) {
+    stop("Missing raster for report: ", path, call. = FALSE)
+  }
+  raster <- terra::rast(path)
+  assign(cache_key, raster, envir = raster_cache)
+  raster
+}
+
+read_report_layer <- function(product_id, year, layer_type) {
+  product <- event_report_products[[product_id]]
+  layer_name <- if (identical(layer_type, "top")) product$top_layer else product$value_layer
+  raster <- read_report_raster(product_id, year)
+  if (!layer_name %in% names(raster)) {
+    stop("Raster does not contain layer ", layer_name, ": ", product$raster_path(year), call. = FALSE)
+  }
+  raster[[layer_name]]
+}
+
+layer_values <- function(raster_layer) {
+  values <- terra::values(raster_layer, mat = FALSE)
+  values[is.finite(values)]
+}
+
+product_value_bins <- function(product_id) {
+  values <- unlist(
+    lapply(available_years(event_report_products[[product_id]]), function(year) {
+      layer_values(read_report_layer(product_id, year, "value"))
+    }),
+    use.names = FALSE
+  )
+  if (length(values) == 0) {
+    stop("No finite raster values were found for ", event_report_products[[product_id]]$label, call. = FALSE)
+  }
+  breaks <- event_report_products[[product_id]]$breakpoints
+  lower <- min(values, na.rm = TRUE)
+  upper <- max(values, na.rm = TRUE)
+  unique(c(lower, breaks[breaks > lower & breaks < upper], upper))
+}
+
+discrete_break_labels <- function(bins) {
+  labels <- character(length(bins) - 1)
+  for (i in seq_along(labels)) {
+    lower <- bins[i]
+    upper <- bins[i + 1]
+    if (i == length(labels)) {
+      labels[i] <- paste0(signif(lower, 3), "+")
+    } else {
+      labels[i] <- paste0(signif(lower, 3), "-", signif(upper, 3))
+    }
+  }
+  labels
+}
+
+fit_product_bounds <- function(map, product_id) {
+  product <- event_report_products[[product_id]]
+  years <- available_years(product)
+  extents <- lapply(years, function(year) terra::ext(read_report_raster(product_id, year)))
+  xmin <- min(vapply(extents, terra::xmin, numeric(1)), na.rm = TRUE)
+  xmax <- max(vapply(extents, terra::xmax, numeric(1)), na.rm = TRUE)
+  ymin <- min(vapply(extents, terra::ymin, numeric(1)), na.rm = TRUE)
+  ymax <- max(vapply(extents, terra::ymax, numeric(1)), na.rm = TRUE)
+  leaflet::fitBounds(map, lng1 = xmin, lat1 = ymin, lng2 = xmax, lat2 = ymax)
+}
+
+standardize_event_overlay_columns <- function(events) {
+  names(events) <- tolower(names(events))
+  if (!"longitude" %in% names(events) && "long" %in% names(events)) {
+    events$longitude <- events$long
+  }
+  if (!"latitude" %in% names(events) && "lat" %in% names(events)) {
+    events$latitude <- events$lat
+  }
+  if (!"id" %in% names(events)) {
+    events$id <- seq_len(nrow(events))
+  }
+  if (!"type" %in% names(events)) {
+    events$type <- NA_character_
+  }
+  if (!"country" %in% names(events)) {
+    events$country <- NA_character_
+  }
+  events$year <- as.integer(events$year)
+  events$latitude <- as.numeric(events$latitude)
+  events$longitude <- as.numeric(events$longitude)
+  events <- events[is.finite(events$latitude) & is.finite(events$longitude), , drop = FALSE]
+  events$event_color <- ifelse(
+    events$year == 2026,
+    EVENT_COLOR_2026,
+    ifelse(events$year == 2025, EVENT_COLOR_2025, EVENT_COLOR_OTHER)
+  )
+  events$popup_text <- sprintf(
+    "<strong>%s</strong><br>Year: %s<br>Type: %s<br>Country: %s",
+    htmltools::htmlEscape(events$id),
+    events$year,
+    htmltools::htmlEscape(ifelse(is.na(events$type) | !nzchar(events$type), "unknown", events$type)),
+    htmltools::htmlEscape(ifelse(is.na(events$country) | !nzchar(events$country), "unknown", events$country))
+  )
+  events
+}
+
+read_event_overlay_data <- function() {
+  outcomes_csv <- existing_path(OUTCOMES_CSV_CANDIDATES)
+  if (is.na(outcomes_csv)) {
+    warning("Could not find outcomes CSV for event overlay.")
+    return(data.frame())
+  }
+  standardize_event_overlay_columns(utils::read.csv(outcomes_csv, stringsAsFactors = FALSE))
+}
+
+add_event_overlay <- function(map) {
+  events <- read_event_overlay_data()
+  if (nrow(events) == 0) {
+    return(map)
+  }
+  map |>
+    leaflet::addCircleMarkers(
+      data = events,
+      lng = ~longitude,
+      lat = ~latitude,
+      radius = EVENT_POINT_RADIUS,
+      stroke = TRUE,
+      weight = 1,
+      color = ~event_color,
+      fillColor = ~event_color,
+      fillOpacity = 0.95,
+      opacity = 1,
+      popup = ~popup_text,
+      label = ~id,
+      group = EVENT_OVERLAY_GROUP
+    ) |>
+    leaflet::addLegend(
+      position = "bottomright",
+      colors = c(EVENT_COLOR_2026, EVENT_COLOR_2025, EVENT_COLOR_OTHER),
+      labels = c("2026 events", "2025 events", "Earlier events"),
+      title = "Events",
+      opacity = 1
+    )
+}
+
+enforce_single_active_overlay <- function(map, overlay_groups, default_group) {
+  htmlwidgets::onRender(
+    map,
+    "
+    function(el, x, data) {
+      var map = this;
+      var overlayGroups = data.overlayGroups || [];
+      var defaultGroup = data.defaultGroup;
+      var activeGroup = defaultGroup;
+      var radioName = el.id + '-exclusive-year-overlay';
+      function normalizeLabel(value) {
+        return (value || '').replace(/\\s+/g, ' ').trim();
+      }
+      function makeOverlayControlsRadio() {
+        var overlayPane = el.querySelector('.leaflet-control-layers-overlays');
+        if (!overlayPane) return;
+        overlayPane.querySelectorAll('label').forEach(function(label) {
+          var input = label.querySelector('input');
+          var groupName = normalizeLabel(label.textContent);
+          if (!input || overlayGroups.indexOf(groupName) === -1) return;
+          input.type = 'radio';
+          input.name = radioName;
+          input.checked = groupName === activeGroup;
+        });
+      }
+      setTimeout(makeOverlayControlsRadio, 0);
+      map.on('overlayadd', function(event) {
+        if (overlayGroups.indexOf(event.name) !== -1) activeGroup = event.name;
+        setTimeout(makeOverlayControlsRadio, 0);
+      });
+      map.on('overlayremove', function(event) {
+        if (event.name === activeGroup) activeGroup = defaultGroup;
+        setTimeout(makeOverlayControlsRadio, 0);
+      });
+    }
+    ",
+    data = list(overlayGroups = unname(overlay_groups), defaultGroup = unname(default_group))
+  )
+}
+
+make_layered_report_map <- function(product_id, display_mode) {
+  product <- event_report_products[[product_id]]
+  years <- available_years(product)
+  overlay_groups <- vapply(years, product$year_label, character(1))
+  default_group <- overlay_groups[length(overlay_groups)]
+
+  map <- leaflet::leaflet(options = leaflet::leafletOptions(preferCanvas = TRUE)) |>
+    leaflet::addProviderTiles(leaflet::providers$Esri.WorldTopoMap, group = "Topo") |>
+    leaflet::addProviderTiles(leaflet::providers$CartoDB.Positron, group = "Light") |>
+    leaflet::addScaleBar(position = "bottomleft")
+
+  if (identical(display_mode, "value")) {
+    bins <- product_value_bins(product_id)
+    legend_labels <- discrete_break_labels(bins)
+    colors <- grDevices::colorRampPalette(product$colors)(length(legend_labels))
+    finite_values <- unlist(
+      lapply(years, function(year) layer_values(read_report_layer(product_id, year, "value"))),
+      use.names = FALSE
+    )
+    palette <- leaflet::colorBin(
+      palette = colors,
+      bins = bins,
+      domain = finite_values,
+      na.color = LEAFLET_NA_COLOR
+    )
+    for (i in seq_along(years)) {
+      map <- leaflet::addRasterImage(
+        map,
+        read_report_layer(product_id, years[i], "value"),
+        colors = palette,
+        opacity = MAP_OPACITY_VALUE,
+        project = TRUE,
+        maxBytes = 50 * 1024 * 1024,
+        group = overlay_groups[i]
+      )
+    }
+    map <- leaflet::addLegend(
+      map,
+      position = "bottomleft",
+      colors = rev(colors),
+      labels = rev(legend_labels),
+      title = product$legend_title,
+      opacity = MAP_OPACITY_VALUE
+    )
+  } else {
+    palette <- leaflet::colorBin(
+      palette = TOP_PERCENTILE_COLOR,
+      bins = c(0.5, 1.5),
+      domain = c(1),
+      na.color = LEAFLET_NA_COLOR
+    )
+    for (i in seq_along(years)) {
+      map <- leaflet::addRasterImage(
+        map,
+        read_report_layer(product_id, years[i], "top"),
+        colors = palette,
+        opacity = MAP_OPACITY_TOP1,
+        project = TRUE,
+        maxBytes = 50 * 1024 * 1024,
+        group = overlay_groups[i]
+      )
+    }
+    map <- leaflet::addLegend(
+      map,
+      position = "bottomleft",
+      colors = TOP_PERCENTILE_COLOR,
+      labels = "Top 1%",
+      title = product$top_legend_title,
+      opacity = MAP_OPACITY_TOP1
+    )
+  }
+
+  map <- add_event_overlay(map)
+  map |>
+    leaflet::addLayersControl(
+      baseGroups = c("Topo", "Light"),
+      overlayGroups = c(overlay_groups, EVENT_OVERLAY_GROUP),
+      options = leaflet::layersControlOptions(collapsed = FALSE)
+    ) |>
+    leaflet::hideGroup(setdiff(overlay_groups, default_group)) |>
+    fit_product_bounds(product_id) |>
+    enforce_single_active_overlay(overlay_groups, default_group)
+}
+```
+
+```{css, echo=FALSE}
+.main-container {
+  max-width: 1800px !important;
+  width: 98% !important;
+}
+
+.section-note {
+  max-width: 1300px;
+  font-size: 1.05rem;
+  line-height: 1.45;
+  margin-bottom: 1rem;
+}
+
+.leaflet {
+  border: 1px solid #cccccc;
+  margin-bottom: 1.5rem;
+}
+```
+
+This self-contained HTML report reads the final full-data SuperLearner GeoTIFF rasters generated by `08_train_predict_full_superlearner_historical_anomaly.R` and embeds interactive Leaflet maps. Event points are shown as cyan for 2026, deeppink for 2025, and black for earlier years. Raster overlays are packaged into the knitted HTML file; basemap tiles still require an internet connection when the recipient opens the report.
+
+## Overall Relative Odds Ratio Predictions
+
+<div class="section-note">
+These maps show the mean relative odds ratio (ROR) for each prediction-grid cell. A value above 1 means the estimated odds for that cell-year are higher than the study-area average odds for the same year.
+</div>
+
+### Mean ROR
+
+```{r ror-value-map}
+make_layered_report_map("ror", "value")
+```
+
+### Top 1% Mean ROR
+
+```{r ror-top-map}
+make_layered_report_map("ror", "top")
+```
+
+## Historical Anomaly In Relative Odds Ratios
+
+<div class="section-note">
+These maps show the ratio of the current year's mean ROR to the historical average mean ROR for the same cell, using all prediction years currently available in the final-model raster folder. Values above 1 indicate that the cell-year is elevated relative to its own historical baseline; values below 1 indicate that it is lower than its historical baseline.
+</div>
+
+### Mean Historical ROR Anomaly Ratio
+
+```{r ror-anomaly-value-map}
+make_layered_report_map("ror_anomaly", "value")
+```
+
+### Top 1% Mean Historical ROR Anomaly Ratios
+
+```{r ror-anomaly-top-map}
+make_layered_report_map("ror_anomaly", "top")
+```

@@ -147,7 +147,7 @@ SHAP_CHANGE_TABLE_CSV <- file.path(
   FULL_PREDICTION_DIR,
   "shap",
   "tables",
-  "prediction_grid_mean_shap_changes_2021_2025.csv"
+  "prediction_grid_mean_shap_changes_2022_2025.csv"
 )
 
 PREDICTION_YEARS <- 2022:2025

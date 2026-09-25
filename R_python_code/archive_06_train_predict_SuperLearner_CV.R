@@ -4,7 +4,7 @@
 # 04_train_predict_brt_simple.R, but fits a SuperLearner model instead of a BRT.
 # It keeps the first pass deliberately light: three quick learners, 10-fold
 # outer cross-validation, F1-based candidate/threshold selection, and annual
-# prediction maps for 2020-2025.
+# prediction maps for 2021-2025.
 
 
 #### Configuration ####
@@ -117,16 +117,16 @@ if (
   isTRUE(ALLOW_LEGACY_PATH_FALLBACK) &&
   identical(ACTIVE_STUDY_AREA_ANALYSIS_NAME, "equatorial_africa") &&
     (!file.exists(file.path(DATA_DIR, "dataset2.csv")) ||
-       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))) &&
+       !file.exists(file.path(DATA_DIR, "prediction_grid_covariates_2021_2025.csv"))) &&
     file.exists(file.path(LEGACY_DATA_DIR, "dataset2.csv")) &&
-    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2020_2025.csv"))
+    file.exists(file.path(LEGACY_DATA_DIR, "prediction_grid_covariates_2021_2025.csv"))
 ) {
   message("Using legacy root-level data folder because the equatorial Africa analysis data folder is not complete yet: ", LEGACY_DATA_DIR)
   DATA_DIR <- LEGACY_DATA_DIR
 }
 
 TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
-PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2020_2025.csv")
+PREDICTION_GRID_CSV <- file.path(DATA_DIR, "prediction_grid_covariates_2021_2025.csv")
 
 MODEL_DIR <- file.path(ANALYSIS_MODEL_DIR, ACTIVE_SUBANALYSIS_NAME)
 OUTPUT_DIR <- file.path(ANALYSIS_OUTPUT_DIR, ACTIVE_SUBANALYSIS_NAME)
@@ -150,11 +150,11 @@ SL_FIT_RDS <- file.path(MODEL_DIR, "superlearner_fit.rds")
 
 MODEL_PREDICTION_TABLE_CSV <- file.path(
   PREDICTION_TABLE_DIR,
-  "prediction_grid_superlearner_predictions_2020_2025.csv"
+  "prediction_grid_superlearner_predictions_2021_2025.csv"
 )
 ANNUAL_SUMMARY_PREDICTION_CSV <- file.path(
   PREDICTION_TABLE_DIR,
-  "prediction_grid_superlearner_summaries_2020_2025.csv"
+  "prediction_grid_superlearner_summaries_2021_2025.csv"
 )
 
 RANDOM_SEED <- 20260827
@@ -191,7 +191,7 @@ THRESHOLD_GRID <- sort(unique(c(
   seq(0.250, 0.500, by = 0.050)
 )))
 
-PREDICTION_YEARS <- 2020:2025
+PREDICTION_YEARS <- 2021:2025
 RASTER_CRS <- "EPSG:4326"
 COORDINATE_ROUND_DIGITS <- 10
 OVERWRITE_CV_RESULTS <- TRUE

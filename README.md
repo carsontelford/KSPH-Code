@@ -4,7 +4,7 @@ This repository is a handoff-ready pipeline for predicting where and when an eve
 
 The current toy study area is mainland Africa within approximately 10 degrees north/south of the equator. The canonical study-area input is `config/africacountries_nolakes.shp`, clipped to the equatorial band inside the scripts. Climate covariates use global products available in Earth Engine, including ERA5-Land aggregates for precipitation, temperature, and PET, and MODIS for NDVI.
 
-Prediction grid cells and pseudo-absence points are created inside the core study area. Covariate extraction uses the same land shapefile with a small latitude margin so 100 km donut buffers near the study-area edge can still summarize nearby land context.
+Prediction grid cells and pseudo-absence points are created inside the core study area. Covariate extraction uses the same land shapefile with a small latitude margin so outer ring buffers near the study-area edge can still summarize nearby land context.
 
 ## Folder Structure
 
@@ -31,40 +31,54 @@ analyses/
   equatorial_africa/
     data/
     models/
-      all_types/
-      tfv/
+      superlearner/
         all_types/
+        type_Z/
+      stepwise_superlearner/
+        all_types/
+        type_Z/
     outputs/
-      extraction/
-      all_types/
-      tfv/
+      descriptive/
         all_types/
+        type_Z/
+      extraction/
+      superlearner/
+        all_types/
+        type_Z/
+      stepwise_superlearner/
+        all_types/
+        type_Z/
 
   drc/
     data/
     models/
-      all_types/
-      type_Z/
-      tfv/
+      superlearner/
+        all_types/
+        type_Z/
+      stepwise_superlearner/
         all_types/
         type_Z/
     outputs/
+      descriptive/
+        all_types/
+        type_Z/
       extraction/
-      all_types/
-      type_Z/
-      tfv/
+      superlearner/
+        all_types/
+        type_Z/
+      stepwise_superlearner/
         all_types/
         type_Z/
 ```
 
 To switch study areas, edit `STUDY_AREA_ANALYSIS_NAME`, `STUDY_AREA_FILE`, and
 `STUDY_AREA_BBOX` near the top of scripts `01` and `02`, then use the same
-`STUDY_AREA_ANALYSIS_NAME` in scripts `03`, `04`, `04b`, `05`, `05b`, `05c`,
-and `06`. To run a model sub-analysis without re-extracting covariates, edit
-`SUBANALYSIS_NAME` and/or `TRAINING_TYPE_FILTER` near the top of the modeling
-scripts, then point the report scripts to the matching sub-analysis folder.
-Legacy root-level path fallbacks are off by default; only enable
-`ALLOW_LEGACY_PATH_FALLBACK` for one-time migration checks.
+`STUDY_AREA_ANALYSIS_NAME` in scripts `03` through `08`. To run a model
+sub-analysis without re-extracting covariates, edit `SUBANALYSIS_NAME` and/or
+`TRAINING_TYPE_FILTER` near the top of scripts `04` through `07`, then point
+script `08` to the matching sub-analysis folder. Legacy root-level path
+fallbacks are off by default; only enable `ALLOW_LEGACY_PATH_FALLBACK` for
+one-time migration checks.
 
 ## Pipeline
 
@@ -74,14 +88,14 @@ Install R package dependencies before running the R scripts:
 
 ```r
 install.packages(c(
-  "sf", "terra", "gbm", "dismo", "ggplot2", "pROC", "PRROC",
-  "caret", "rmarkdown", "knitr", "shiny", "leaflet", "htmltools",
-  "htmlwidgets", "SuperLearner", "rpart", "ranger"
+  "sf", "terra", "ggplot2", "caret", "rmarkdown", "knitr",
+  "leaflet", "htmltools", "htmlwidgets", "SuperLearner", "rpart", "ranger"
 ))
 ```
 
-`treeshap` is only needed if `RUN_SHAP_CALCULATIONS <- TRUE` in the BRT
-modeling scripts.
+Archived legacy BRT scripts may require additional packages such as `gbm`,
+`dismo`, and `treeshap`, but those are not part of the current production
+SuperLearner workflow.
 
 ### 1. Create Dataset1
 
@@ -144,8 +158,8 @@ syncs those CSVs locally for the merge cells.
 Key outputs:
 
 - `analyses/<STUDY_AREA_ANALYSIS_NAME>/data/dataset2.csv`
-- `analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_10km.csv`
-- `analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2020_2025.csv`
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_5km.csv`
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2021_2025.csv`
 
 The active study-area controls live near the top of the notebook:
 
@@ -158,7 +172,7 @@ The active study-area controls live near the top of the notebook:
 Set `STUDY_AREA_BBOX = None` to use the full extent/polygon of a
 country-specific `STUDY_AREA_FILE`.
 
-### 3. Append Static Local Covariates
+### 3. Add Post-Extraction Covariates
 
 Copy any local static `.tif`/`.tiff` covariate rasters into:
 
@@ -170,81 +184,99 @@ must place the required local static rasters there before running script `03`.
 Then run:
 
 ```r
-source("R_python_code/03_append_static_covariates.R")
+source("R_python_code/03_add_covars.R")
 ```
 
 This samples each raster at the training and prediction-grid point locations,
 caches one extraction CSV per raster in the active analysis data folder, appends
 matching covariate columns to
 `analyses/<STUDY_AREA_ANALYSIS_NAME>/data/dataset2.csv` and
-`analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2020_2025.csv`,
-and updates `config/predictor_list.csv`.
+`analyses/<STUDY_AREA_ANALYSIS_NAME>/data/prediction_grid_covariates_2021_2025.csv`,
+creates forest/log-population and forest-edge/log-population interaction
+covariates at each spatial scale, and updates `config/predictor_list.csv`.
 
-### 4. Train Full BRT Model And Predict Maps
+### 4. Descriptive Analysis
 
 ```r
-source("R_python_code/04_train_predict_brt_simple.R")
+source("R_python_code/04_descriptive_analysis.R")
 ```
 
 Outputs:
 
-- `analyses/<STUDY_AREA_ANALYSIS_NAME>/models/<SUBANALYSIS_NAME>/`
-- `analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/<SUBANALYSIS_NAME>/predictions/`
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/descriptive/<SUBANALYSIS_NAME>/tables/`
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/descriptive/<SUBANALYSIS_NAME>/plots/`
 
-The script creates sampled control/event training datasets, fits the BRT
-ensemble, predicts over the prediction-grid table, rasterizes annual summaries,
-and creates derived ROR/change outputs and model diagnostics.
+This script checks covariate completeness, exports Table 1-style summaries for
+presences versus absences and by event type, runs simple unadjusted standardized
+logistic summaries, and writes basic boxplot PDFs.
 
-At the start of modeling, predictors are screened for excessive missingness
-after the Hansen zero-fill rules are applied. By default, any predictor with
-more than 20% missingness in either the filtered training data or selected
-prediction-grid rows is excluded from that model run. The audit file is saved
-as `models/<SUBANALYSIS_NAME>/predictor_missingness_report.csv`.
-
-### 4b. Temporal Forward Validation
+### 5. Tune SuperLearner With Cross-Validation
 
 ```r
-source("R_python_code/04b_temporal_forward_validation_brt.R")
+source("R_python_code/05_tune_superlearner_cv.R")
 ```
 
 Outputs:
 
-- `analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/tfv/<SUBANALYSIS_NAME>/`
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/models/superlearner/<SUBANALYSIS_NAME>/`
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/superlearner/<SUBANALYSIS_NAME>/tuning/`
 
-This retrospective workflow trains only on years before each target year, then
-predicts the held-forward year.
+This script runs leave-year-out cross-validation for the production
+SuperLearner. Within each outer fold it fits a small sampled ensemble using all
+events and 50 sampled controls per event, averages the held-out predictions,
+and chooses the threshold that maximizes sensitivity x specificity. It saves
+the retained predictor list, the missingness audit, the fold assignments, CV
+predictions, caret confusion matrix output, and the tuned hyperparameters/
+threshold used by script `06`.
 
-The same predictor missingness screen is applied once before the forward-year
-fits, and its audit file is saved under
-`models/tfv/<SUBANALYSIS_NAME>/predictor_missingness_report.csv`.
+At the start of tuning, predictors are screened for excessive training-data
+missingness after the Hansen zero-fill rules are applied. By default, any
+predictor with more than 20% missingness in the filtered training data is
+excluded from that model run. Script `06` separately verifies that retained
+predictors are usable in the full prediction grid before predicting.
 
-### 5. Interactive Reports
-
-Run the Shiny report while working interactively:
-
-```r
-rmarkdown::run("R_python_code/05_interactive_prediction_report_Shiny.Rmd")
-```
-
-Knit the email-friendly HTML report:
-
-```r
-rmarkdown::render("R_python_code/05b_interactive_prediction_report_email.Rmd")
-```
-
-For reports, set `STUDY_AREA_ANALYSIS_NAME` to choose the extracted study area,
-`FULL_MODEL_SUBANALYSIS_NAME` to choose full-model outputs, and
-`TEMPORAL_ANALYSIS_GROUP` to choose temporal-forward-validation outputs.
-
-### 6. SuperLearner Prototype
+### 6. Stepwise SuperLearner Predictions
 
 ```r
-source("R_python_code/06_train_predict_SuperLearner_CV.R")
+source("R_python_code/06_stepwise_predict_superlearner.R")
 ```
 
-This prototype uses the same predictor missingness screen before median
-imputation, so high-missing static covariates are dropped rather than filled
-across places where the source raster does not exist.
+Outputs:
+
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/models/stepwise_superlearner/<SUBANALYSIS_NAME>/`
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/stepwise_superlearner/<SUBANALYSIS_NAME>/`
+
+This script reads the tuned settings from `05`, trains only on data available
+before each target year, then predicts years 2021-2025. Each year is predicted
+with a 50-fit sampled SuperLearner ensemble using all events and 50 sampled
+controls per event for each ensemble fit. It writes annual prediction tables,
+probability rasters, ROR rasters, and 1-year ROR-change rasters.
+
+### 7. Evaluate Stepwise Predictions
+
+```r
+source("R_python_code/07_evaluate_stepwise_predictions.R")
+```
+
+Outputs:
+
+- `analyses/<STUDY_AREA_ANALYSIS_NAME>/outputs/stepwise_superlearner/<SUBANALYSIS_NAME>/evaluation/`
+
+This script extracts the stepwise predictions at labeled training-data
+locations from 2021-2025 and reports caret confusion matrices, sensitivity,
+specificity, PPV, NPV, F1, ROC AUC, and PR AUC. It also evaluates top-1%
+decision rules for annual ROR, 1-year ROR increase, and either condition.
+
+### 8. Interactive Email Report
+
+```r
+rmarkdown::render("R_python_code/08_interactive_prediction_report_email.Rmd")
+```
+
+This self-contained HTML report visualizes the stepwise SuperLearner ROR and
+1-year ROR-change rasters with event overlays. Set
+`STUDY_AREA_ANALYSIS_NAME` and `STEPWISE_ANALYSIS_GROUP` near the top of the
+Rmd to choose the study area and sub-analysis.
 
 ## Core Covariates
 
@@ -289,7 +321,7 @@ For local static rasters, copy `.tif`/`.tiff` files into:
 
 - `Static Covariates/`
 
-Then run `R_python_code/03_append_static_covariates.R`. These files are not
+Then run `R_python_code/03_add_covars.R`. These files are not
 committed to Git.
 
 For rasters that should be extracted inside Earth Engine, upload the raster to
@@ -306,7 +338,7 @@ Set `enabled` to `true` and choose `buffer_mode`:
 
 - LandScan is used with a latest-available-year rule.
 - Forest-loss lag variables are structurally unavailable before their lagged Hansen year exists: 1-year lag is unavailable for 2001, and 2-year lag is unavailable for 2001-2002.
-- Prediction grid cells are sampled at approximately 10 km resolution.
+- Prediction grid cells are sampled at approximately 5 km resolution.
 - Training and grid locations are limited to the configured study area, while covariate extraction uses a buffered land context near the study-area edge.
 - `01_make_dataset1.R` requires `sf` for true polygon sampling from `africacountries_nolakes.shp`. A bounding-box fallback exists for quick testing only, but is disabled by default because it can sample ocean points.
 - The Python GEE scripts require `geopandas`/`shapely` to read the same shapefile and build the land-only prediction grid.

@@ -34,7 +34,7 @@ DEFAULT_STUDY_AREA_BBOX = (-15.5, -10.0, 51.0, 10.0)
 
 EXPORT_FOLDER = "Event_ENM_Exports"
 BASELINE_YEARS = list(range(2000, 2025))
-PREDICTION_YEARS = list(range(2020, 2026))
+PREDICTION_YEARS = list(range(2018, 2026))
 
 HANSEN_ASSET = "UMD/hansen/global_forest_change_2025_v1_13"
 LANDSCAN_COLLECTION = "projects/sat-io/open-datasets/ORNL/LANDSCAN_GLOBAL"
@@ -50,11 +50,11 @@ LAT_LONG_CRS = "EPSG:4326"
 APPROX_KM_PER_DEGREE = 111.32
 ANALYSIS_CRS = LAT_LONG_CRS
 EXTRACTION_SCALE_M = 1000
-PREDICTION_GRID_SCALE_M = 10000
+PREDICTION_GRID_SCALE_M = 5000
 
 # Native or intended source scales used for reductions. Hansen-derived
 # variables are intentionally coarsened before buffer extraction because the
-# native 30 m product is too expensive for repeated 100 km summaries.
+# native 30 m product is too expensive for repeated large-buffer summaries.
 ERA5_NATIVE_SCALE_M = 11132
 ERA5_DAILY_NATIVE_SCALE_M = 11132
 MODIS_NDVI_NATIVE_SCALE_M = 1000
@@ -62,7 +62,7 @@ SRTM_EXTRACTION_SCALE_M = 5000
 LANDSCAN_NATIVE_SCALE_M = 1000
 HANSEN_BUFFER_SCALE_M = 1000
 HANSEN_REDUCE_MAX_PIXELS = 65535
-DENSE_FOREST_THRESHOLD = 0.40
+DENSE_FOREST_THRESHOLD = 0.60
 NO_DATA_VALUE = -9999
 MAX_CONTEXT_BUFFER_M = 100000
 EXTRACTION_LAT_BUFFER_DEGREES = 1.0
@@ -77,7 +77,7 @@ SCALED_RINGS = [
 NONSCALED_RINGS = [(0.000, 0.090, "0_10km")]
 
 # Degree equivalents of the simplification tolerances used in the prediction
-# workflow: ~200 m, 500 m, 3000 m, and 8000 m at the equator.
+# workflow: ~200 m, 500 m, and 3000 m at the equator.
 BUFFER_GEOMETRY_ERROR_BY_DISTANCE_DEG = {
     0.090: 0.0018,
     0.225: 0.0045,
@@ -1516,7 +1516,7 @@ def extract_point_buffer_covariates_for_year(
     """Extract training covariates with per-feature buffer reductions.
 
     This path is safer for the training table than raster neighborhood kernels:
-    it avoids creating 100 km moving-window rasters across the full study area.
+    it avoids creating moving-window rasters across the full study area.
     """
     if covariate_group not in {"all", "scaled", "nonscaled"}:
         raise ValueError("covariate_group must be 'all', 'scaled', or 'nonscaled'.")
@@ -1834,7 +1834,18 @@ def export_table_to_drive(
         fileFormat="CSV",
         selectors=list(selectors) if selectors else None,
     )
-    task.start()
+    try:
+        task.start()
+    except Exception as exc:  # noqa: BLE001 - ee raises several exception classes here.
+        message = str(exc)
+        if "A different Operation was already started with the given request_id" in message:
+            row["state"] = "REQUEST_ALREADY_STARTED"
+            print(
+                f"Export request already started: {description}. "
+                "Continuing; rerun after Drive sync if this CSV is missing."
+            )
+            return row
+        raise
     status = task.status()
     row["task_id"] = status.get("id")
     row["state"] = status.get("state")
