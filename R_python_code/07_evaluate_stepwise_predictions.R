@@ -85,7 +85,7 @@ RASTER_CRS <- "EPSG:4326"
 OUTCOME_COLUMN <- "outcome"
 EVENT_VALUE <- 1L
 CONTROL_VALUE <- 0L
-TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country")
+TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country", "hansen_datamask", "is_land")
 
 ACTIVE_STUDY_AREA_ANALYSIS_NAME <- sanitize_path_component(STUDY_AREA_ANALYSIS_NAME)
 ACTIVE_SUBANALYSIS_NAME <- derive_subanalysis_name(SUBANALYSIS_NAME, TRAINING_TYPE_FILTER)

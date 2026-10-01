@@ -117,8 +117,19 @@ OUTPUT_CSV <- file.path(DATA_DIR, "dataset1.csv")
 N_PSEUDO_ABSENCE <- 10000
 ABSENCE_YEARS <- 2001:2025
 RANDOM_SEED <- 20260813
-SAMPLING_VERSION <- "pseudo_absence_random_v1"
 STUDY_AREA_NAME <- ACTIVE_STUDY_AREA_ANALYSIS_NAME
+
+# Pseudo-absence sampling options:
+#   "log_population_weighted": sample from the active study area with
+#      probability proportional to log1p(population density). Land pixels with
+#      raw population 0 get a small positive floor so very remote places remain
+#      eligible; raster NA pixels remain unsampled.
+#   "random": sample uniformly from the active study-area polygon.
+ABSENCE_SAMPLING_METHOD <- "log_population_weighted"
+ABSENCE_WEIGHT_RASTER <- file.path(CODE_DIR, "config", "sampling_weights", "landscan_pop_EqAf1km.tif")
+ABSENCE_WEIGHT_ZERO_FLOOR_QUANTILE <- 0.01
+ABSENCE_WEIGHT_ZERO_FLOOR_FALLBACK <- 1e-6
+SAMPLING_VERSION <- paste0("pseudo_absence_", ABSENCE_SAMPLING_METHOD, "_v1")
 
 FILTER_PRESENCES_TO_STUDY_AREA <- TRUE
 ALLOW_BBOX_FALLBACK <- FALSE
@@ -274,12 +285,11 @@ standardize_presence_columns <- function(df) {
   out
 }
 
-sample_absences_with_sf <- function(presence, study_area) {
+make_absence_sampling_area <- function(presence, study_area) {
   old_s2 <- sf::sf_use_s2(FALSE)
   on.exit(sf::sf_use_s2(old_s2), add = TRUE)
 
   absence_sampling_area <- study_area
-  sampling_bbox <- sf::st_bbox(absence_sampling_area)
 
   if (EXCLUDE_AROUND_PRESENCES_M > 0) {
     presence_sf <- sf::st_as_sf(
@@ -291,8 +301,34 @@ sample_absences_with_sf <- function(presence, study_area) {
     presence_buffer <- sf::st_buffer(sf::st_transform(presence_sf, 6933), EXCLUDE_AROUND_PRESENCES_M)
     presence_buffer <- sf::st_transform(sf::st_union(presence_buffer), 4326)
     absence_sampling_area <- suppressWarnings(sf::st_difference(study_area, presence_buffer))
-    sampling_bbox <- sf::st_bbox(absence_sampling_area)
   }
+
+  absence_sampling_area <- suppressWarnings(sf::st_collection_extract(absence_sampling_area, "POLYGON"))
+  absence_sampling_area <- absence_sampling_area[!sf::st_is_empty(absence_sampling_area), , drop = FALSE]
+  if (nrow(absence_sampling_area) == 0) {
+    stop("No pseudo-absence sampling area remains after exclusions.", call. = FALSE)
+  }
+
+  absence_sampling_area
+}
+
+make_absence_output <- function(absence_coords, source_label) {
+  data.frame(
+    id = sprintf("PA%05d", seq_len(N_PSEUDO_ABSENCE)),
+    year = sample(ABSENCE_YEARS, N_PSEUDO_ABSENCE, replace = TRUE),
+    latitude = absence_coords$latitude,
+    longitude = absence_coords$longitude,
+    outcome = 0L,
+    type = "pseudo_absence",
+    country = NA_character_,
+    point_type = "pseudo_absence",
+    source = source_label,
+    stringsAsFactors = FALSE
+  )
+}
+
+sample_absences_random_with_sf <- function(absence_sampling_area) {
+  sampling_bbox <- sf::st_bbox(absence_sampling_area)
 
   kept_points <- list()
   kept_n <- 0
@@ -327,17 +363,107 @@ sample_absences_with_sf <- function(presence, study_area) {
   absence_coords <- do.call(rbind, kept_points)
   absence_coords <- absence_coords[seq_len(N_PSEUDO_ABSENCE), , drop = FALSE]
 
-  data.frame(
-    id = sprintf("PA%05d", seq_len(N_PSEUDO_ABSENCE)),
-    year = sample(ABSENCE_YEARS, N_PSEUDO_ABSENCE, replace = TRUE),
-    latitude = absence_coords$latitude,
-    longitude = absence_coords$longitude,
-    outcome = 0L,
-    type = "pseudo_absence",
-    country = NA_character_,
-    point_type = "pseudo_absence",
-    source = "random_background",
-    stringsAsFactors = FALSE
+  make_absence_output(absence_coords, "random_background")
+}
+
+sample_absences_log_population_weighted <- function(absence_sampling_area) {
+  require_package("terra")
+
+  if (!file.exists(ABSENCE_WEIGHT_RASTER)) {
+    stop(
+      "ABSENCE_SAMPLING_METHOD is 'log_population_weighted', but the raster does not exist: ",
+      ABSENCE_WEIGHT_RASTER,
+      call. = FALSE
+    )
+  }
+
+  pop_raster <- terra::rast(ABSENCE_WEIGHT_RASTER)
+  if (terra::nlyr(pop_raster) > 1) {
+    warning("ABSENCE_WEIGHT_RASTER has multiple layers; using layer 1.")
+    pop_raster <- pop_raster[[1]]
+  }
+
+  raster_crs <- terra::crs(pop_raster)
+  if (!nzchar(raster_crs)) {
+    stop("ABSENCE_WEIGHT_RASTER must have a valid CRS.", call. = FALSE)
+  }
+
+  sampling_area_for_raster <- sf::st_transform(absence_sampling_area, crs = raster_crs)
+  sampling_area_vect <- terra::vect(sampling_area_for_raster)
+  pop_raster <- terra::crop(pop_raster, sampling_area_vect)
+  pop_raster <- terra::mask(pop_raster, sampling_area_vect)
+
+  raw_values <- terra::values(pop_raster, mat = FALSE)
+  weights <- rep(NA_real_, length(raw_values))
+  valid_land <- is.finite(raw_values) & raw_values >= 0
+  weights[valid_land] <- log1p(raw_values[valid_land])
+
+  positive_weights <- weights[is.finite(weights) & weights > 0]
+  if (length(positive_weights) == 0) {
+    stop(
+      "ABSENCE_WEIGHT_RASTER has no positive population values inside the active study area.",
+      call. = FALSE
+    )
+  }
+
+  zero_floor <- as.numeric(stats::quantile(
+    positive_weights,
+    probs = ABSENCE_WEIGHT_ZERO_FLOOR_QUANTILE,
+    na.rm = TRUE,
+    names = FALSE
+  ))
+  if (!is.finite(zero_floor) || zero_floor <= 0) {
+    zero_floor <- ABSENCE_WEIGHT_ZERO_FLOOR_FALLBACK
+  }
+
+  zero_land <- valid_land & raw_values == 0
+  weights[zero_land] <- zero_floor
+  eligible_cells <- which(is.finite(weights) & weights > 0)
+  if (length(eligible_cells) < N_PSEUDO_ABSENCE) {
+    stop(
+      "Not enough eligible population-weighted raster cells inside the active study area to sample ",
+      N_PSEUDO_ABSENCE,
+      " pseudo-absence points without replacement. Eligible cells: ",
+      length(eligible_cells),
+      call. = FALSE
+    )
+  }
+
+  sampled_cells <- sample(
+    eligible_cells,
+    size = N_PSEUDO_ABSENCE,
+    replace = FALSE,
+    prob = weights[eligible_cells]
+  )
+  sampled_xy <- terra::xyFromCell(pop_raster, sampled_cells)
+  sampled_points <- data.frame(
+    longitude = sampled_xy[, "x"],
+    latitude = sampled_xy[, "y"]
+  )
+
+  message("Population-weighted pseudo-absence raster: ", ABSENCE_WEIGHT_RASTER)
+  message("Population-weighted raster cells eligible for sampling: ", format(length(eligible_cells), big.mark = ","))
+  message("Zero-population land cells assigned weight floor: ", format(sum(zero_land, na.rm = TRUE), big.mark = ","))
+  message("Zero-population weight floor: ", signif(zero_floor, 4))
+
+  make_absence_output(sampled_points, "log_population_weighted_background")
+}
+
+sample_absences_with_sf <- function(presence, study_area) {
+  absence_sampling_area <- make_absence_sampling_area(presence, study_area)
+
+  if (identical(ABSENCE_SAMPLING_METHOD, "random")) {
+    return(sample_absences_random_with_sf(absence_sampling_area))
+  }
+  if (identical(ABSENCE_SAMPLING_METHOD, "log_population_weighted")) {
+    return(sample_absences_log_population_weighted(absence_sampling_area))
+  }
+
+  stop(
+    "Unknown ABSENCE_SAMPLING_METHOD: ",
+    ABSENCE_SAMPLING_METHOD,
+    ". Use 'log_population_weighted' or 'random'.",
+    call. = FALSE
   )
 }
 
@@ -431,6 +557,10 @@ message("Analysis data directory: ", DATA_DIR)
 message("Study area name: ", STUDY_AREA_NAME)
 message("Study area file: ", STUDY_AREA_FILE)
 message("Study area bbox: ", format_study_area_bbox(normalize_study_area_bbox()))
+message("Pseudo-absence sampling method: ", ABSENCE_SAMPLING_METHOD)
+if (identical(ABSENCE_SAMPLING_METHOD, "log_population_weighted")) {
+  message("Pseudo-absence weighting raster: ", ABSENCE_WEIGHT_RASTER)
+}
 message("Rows: ", nrow(dataset1))
 message("Presences: ", sum(dataset1$outcome == 1))
 message("Pseudo-absences: ", sum(dataset1$outcome == 0))

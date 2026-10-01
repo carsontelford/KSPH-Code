@@ -81,7 +81,7 @@ PLOT_DIR <- file.path(OUTPUT_DIR, "plots")
 TRAINING_CSV <- file.path(DATA_DIR, "dataset2.csv")
 PREDICTOR_LIST_CSV <- file.path(CODE_DIR, "config", "predictor_list.csv")
 
-TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country")
+TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country", "hansen_datamask", "is_land")
 OUTCOME_COLUMN <- "outcome"
 EVENT_VALUE <- 1L
 CONTROL_VALUE <- 0L

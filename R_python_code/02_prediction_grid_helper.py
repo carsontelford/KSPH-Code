@@ -146,13 +146,39 @@ def scaled_family_scale_m(family: str, ring_suffix: str | None = None) -> int | 
     return _BASE.EXTRACTION_SCALE_M
 
 
+def hansen_datamask_image() -> ee.Image:
+    """Hansen datamask where 1 is mapped land and 2 is permanent water."""
+    return _BASE.hansen_datamask_image()
+
+
+def hansen_mapped_land_mask() -> ee.Image:
+    """Mask for Hansen mapped land surface, excluding no-data and permanent water."""
+    return _BASE.hansen_mapped_land_mask()
+
+
 def land_mask_image(study_region: ee.Geometry) -> ee.Image:
-    """Image mask with valid pixels only inside the mainland/no-lakes study region."""
-    return ee.Image.constant(1).clip(study_region).selfMask().rename("land_mask")
+    """Image mask with valid pixels only on Hansen mapped land inside the study region."""
+    return (
+        ee.Image.constant(1)
+        .clip(study_region)
+        .selfMask()
+        .updateMask(hansen_mapped_land_mask())
+        .rename("land_mask")
+    )
+
+
+def add_hansen_land_flags(features: ee.FeatureCollection, scale_m: int = 30) -> ee.FeatureCollection:
+    """Add Hansen datamask and is_land properties to point features."""
+    return _BASE.add_hansen_land_flags(features, scale_m=scale_m)
+
+
+def add_hansen_land_flag_to_dataframe(df, datamask_column: str = "hansen_datamask"):
+    """Add a local is_land column when Hansen datamask values are already present."""
+    return _BASE.add_hansen_land_flag_to_dataframe(df, datamask_column=datamask_column)
 
 
 def mask_image_to_region(image: ee.Image, study_region: ee.Geometry) -> ee.Image:
-    """Mask an image outside the mainland/no-lakes study region."""
+    """Mask an image outside Hansen mapped land in the study region."""
     return image.updateMask(land_mask_image(study_region))
 
 

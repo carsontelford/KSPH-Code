@@ -552,13 +552,61 @@ def masked_band(name: str) -> ee.Image:
     return zero.updateMask(zero).rename(name).toFloat()
 
 
+def hansen_datamask_image() -> ee.Image:
+    """Hansen datamask where 1 is mapped land and 2 is permanent water."""
+    return ee.Image(HANSEN_ASSET).select("datamask").unmask(0).rename("hansen_datamask").toInt()
+
+
+def hansen_mapped_land_mask() -> ee.Image:
+    """Mask for Hansen mapped land surface, excluding no-data and permanent water."""
+    return hansen_datamask_image().eq(1).selfMask()
+
+
 def land_mask_image(study_region: ee.Geometry) -> ee.Image:
-    """Image mask with valid pixels only inside the mainland/no-lakes study region."""
-    return ee.Image.constant(1).clip(study_region).selfMask().rename("land_mask")
+    """Image mask with valid pixels only on Hansen mapped land inside the study region."""
+    return (
+        ee.Image.constant(1)
+        .clip(study_region)
+        .selfMask()
+        .updateMask(hansen_mapped_land_mask())
+        .rename("land_mask")
+    )
+
+
+def add_hansen_land_flags(features: ee.FeatureCollection, scale_m: int = 30) -> ee.FeatureCollection:
+    """Add Hansen datamask and is_land properties to point features."""
+    datamask = hansen_datamask_image()
+
+    def add_flags(feature: ee.Feature) -> ee.Feature:
+        value = datamask.reduceRegion(
+            reducer=ee.Reducer.first(),
+            geometry=feature.geometry(),
+            scale=scale_m,
+            bestEffort=True,
+            maxPixels=16,
+        ).get("hansen_datamask")
+        value = ee.Number(ee.Algorithms.If(value, value, 0)).toInt()
+        return feature.set(
+            {
+                "hansen_datamask": value,
+                "is_land": value.eq(1),
+            }
+        )
+
+    return features.map(add_flags)
+
+
+def add_hansen_land_flag_to_dataframe(df: pd.DataFrame, datamask_column: str = "hansen_datamask") -> pd.DataFrame:
+    """Add a local is_land column when Hansen datamask values are already present."""
+    out = df.copy()
+    if datamask_column in out.columns:
+        datamask = pd.to_numeric(out[datamask_column], errors="coerce").fillna(0).astype(int)
+        out["is_land"] = datamask.eq(1)
+    return out
 
 
 def mask_image_to_region(image: ee.Image, study_region: ee.Geometry) -> ee.Image:
-    """Mask an image outside the mainland/no-lakes study region."""
+    """Mask an image outside Hansen mapped land in the study region."""
     return image.updateMask(land_mask_image(study_region))
 
 

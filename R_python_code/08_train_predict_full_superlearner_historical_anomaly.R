@@ -95,8 +95,8 @@ RANDOM_SEED <- 20260923
 OUTCOME_COLUMN <- "outcome"
 EVENT_VALUE <- 1L
 CONTROL_VALUE <- 0L
-TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country")
-PREDICTION_BASE_COLUMNS <- c("grid_id", "grid_batch", "x", "y", "year", "longitude", "latitude", "country")
+TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country", "hansen_datamask", "is_land")
+PREDICTION_BASE_COLUMNS <- c("grid_id", "grid_batch", "x", "y", "year", "longitude", "latitude", "country", "hansen_datamask", "is_land")
 RASTER_CRS <- "EPSG:4326"
 
 SL_INTERNAL_FOLDS <- 3
@@ -603,3 +603,4 @@ for (row_index in seq_len(nrow(FINAL_ANALYSES_TO_RUN))) {
 }
 
 message("Done.")
+0.008333333333055786135*2

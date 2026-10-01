@@ -80,6 +80,17 @@ safe_divide <- function(numerator, denominator, fallback = NA_real_) {
   out
 }
 
+coerce_is_land_flag <- function(x) {
+  if (is.logical(x)) {
+    return(!is.na(x) & x)
+  }
+  if (is.numeric(x) || is.integer(x)) {
+    return(!is.na(x) & x != 0)
+  }
+  normalized <- tolower(trimws(as.character(x)))
+  normalized %in% c("true", "t", "1", "yes", "y")
+}
+
 humanize_predictor_name <- function(x) {
   x <- gsub("_0_10km$", " (0-10 km)", x)
   x <- gsub("_10_25km$", " (10-25 km)", x)
@@ -176,8 +187,16 @@ fill_hansen_na_with_zero <- function(df) {
     logical(1)
   )]
 
+  land_rows <- rep(TRUE, nrow(df))
+  if ("is_land" %in% names(df)) {
+    land_rows <- coerce_is_land_flag(df$is_land)
+  }
+
   for (column in columns) {
-    missing_rows <- is.na(df[[column]])
+    if ("is_land" %in% names(df)) {
+      df[[column]][!land_rows] <- NA_real_
+    }
+    missing_rows <- is.na(df[[column]]) & land_rows
     if (any(missing_rows)) {
       df[[column]][missing_rows] <- 0
     }
@@ -894,8 +913,23 @@ predict_superlearner_ensemble_matrix <- function(model_object, X) {
 }
 
 prediction_metadata_columns <- function(df) {
-  candidates <- c("grid_id", "grid_batch", "x", "y", "year", "longitude", "latitude", "country")
+  candidates <- c("grid_id", "grid_batch", "x", "y", "year", "longitude", "latitude", "country", "hansen_datamask", "is_land")
   candidates[candidates %in% names(df)]
+}
+
+mask_prediction_summary_to_land <- function(df, prediction_columns = c("pred_min", "pred_max", "pred_mean", "pred_median")) {
+  if (!"is_land" %in% names(df)) {
+    return(df)
+  }
+  columns <- intersect(prediction_columns, names(df))
+  if (length(columns) == 0) {
+    return(df)
+  }
+  water_rows <- !coerce_is_land_flag(df$is_land)
+  if (any(water_rows, na.rm = TRUE)) {
+    df[water_rows, columns] <- NA_real_
+  }
+  df
 }
 
 make_superlearner_prediction_table <- function(prediction_grid, predictor_names, model_object) {
@@ -925,6 +959,7 @@ summarize_single_prediction_column <- function(prediction_table, prediction_colu
   out$pred_max <- apply(prediction_values, 1, max, na.rm = TRUE)
   out$pred_mean <- rowMeans(prediction_values, na.rm = TRUE)
   out$pred_median <- apply(prediction_values, 1, stats::median, na.rm = TRUE)
+  out <- mask_prediction_summary_to_land(out)
   out
 }
 

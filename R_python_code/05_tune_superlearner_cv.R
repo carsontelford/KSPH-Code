@@ -75,7 +75,7 @@ RANDOM_SEED <- 20260910
 OUTCOME_COLUMN <- "outcome"
 EVENT_VALUE <- 1L
 CONTROL_VALUE <- 0L
-TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country")
+TRAINING_BASE_COLUMNS <- c("id", "year", "latitude", "longitude", "outcome", "type", "country", "hansen_datamask", "is_land")
 
 # Outer CV strategy:
 # - "leave_year_out" holds out all rows from one calendar year at a time.
