@@ -52,6 +52,14 @@ RING_EXTRACTION_SCALES_DEG = {
     "25_50km": 0.0180,
 }
 
+# The 5 km prediction grid makes the 25-50 km fragmentation exports much
+# heavier than the other Hansen exports. Use a coarser working grid for this
+# one derived edge layer, while keeping the same output column name.
+FRAGMENTATION_EXTRACTION_SCALES_DEG = {
+    "25_50km": 0.0450,
+}
+FRAGMENTATION_LARGE_RING_TILE_SCALE = 16
+
 HANSEN_PREDICTION_BANDS = [
     "forest_cover_prop",
     "flsy_prop",
@@ -129,6 +137,11 @@ def ring_scale_degrees(suffix: str) -> float:
     return RING_EXTRACTION_SCALES_DEG.get(suffix, 0.0090)
 
 
+def fragmentation_scale_degrees(suffix: str) -> float:
+    """Return the prediction-grid fragmentation extraction scale in degrees."""
+    return FRAGMENTATION_EXTRACTION_SCALES_DEG.get(suffix, ring_scale_degrees(suffix))
+
+
 def ring_scale_m(suffix: str) -> int:
     """Return the approximate Hansen extraction scale in meters for display."""
     return approx_degrees_to_m(ring_scale_degrees(suffix))
@@ -136,6 +149,10 @@ def ring_scale_m(suffix: str) -> int:
 
 def scaled_family_scale_m(family: str, ring_suffix: str | None = None) -> int | float:
     """Return the reduction scale for one prediction-grid scaled covariate family."""
+    if family == "fragmentation":
+        if ring_suffix is not None:
+            return fragmentation_scale_degrees(ring_suffix)
+        return _BASE.HANSEN_BUFFER_SCALE_M
     if family in {"forest_cover", "forest_loss", "fragmentation"}:
         if ring_suffix is not None:
             return ring_scale_degrees(ring_suffix)
@@ -378,8 +395,21 @@ def annual_forest_loss_images_degrees(
 def annual_fragmentation_image_degrees(
     year: int | ee.Number,
     clip_region: ee.Geometry | None = None,
+    scale_degrees: float | None = None,
 ) -> ee.Image:
     """Annual edge proportion prepared for degree-grid output."""
+    if scale_degrees is not None:
+        forest_cover = annual_forest_cover_image_degrees(year, clip_region=clip_region).reproject(
+            crs=LAT_LONG_CRS,
+            crsTransform=degree_grid_transform(float(scale_degrees)),
+        )
+        dense_forest = forest_cover.gte(_BASE.DENSE_FOREST_THRESHOLD).unmask(0)
+        neighbor_min = dense_forest.focal_min(radius=1, units="pixels")
+        edge_prop = dense_forest.eq(1).And(neighbor_min.eq(0)).rename("frag_edge_prop").toFloat()
+        if clip_region is not None:
+            edge_prop = edge_prop.updateMask(land_mask_image(clip_region)).clip(clip_region)
+        return edge_prop.toFloat()
+
     components = _BASE.hansen_base_components(ee.Number(year))
     hansen_projection = ee.Projection(components["hansen_projection"])
     tree_cover_2000 = ee.Image(components["tree_cover_2000"])
@@ -405,11 +435,16 @@ def prediction_hansen_image(
     study_region: ee.Geometry | None = None,
 ) -> ee.Image:
     """Build one annual multi-band Hansen image for degree-grid prediction."""
+    fragmentation_scale = FRAGMENTATION_EXTRACTION_SCALES_DEG.get(ring_suffix)
     image = ee.Image.cat(
         [
             annual_forest_cover_image_degrees(year, clip_region=study_region),
             annual_forest_loss_images_degrees(year, clip_region=study_region),
-            annual_fragmentation_image_degrees(year, clip_region=study_region),
+            annual_fragmentation_image_degrees(
+                year,
+                clip_region=study_region,
+                scale_degrees=fragmentation_scale,
+            ),
         ]
     )
     return image.select(HANSEN_PREDICTION_BANDS).toFloat()
@@ -467,11 +502,16 @@ def reduce_image_over_buffer_features(
     band_names = list(band_names)
     output_names = [f"{name}_{ring_suffix}" for name in band_names]
     renamed = image.select(band_names).rename(output_names)
+    tile_scale = (
+        FRAGMENTATION_LARGE_RING_TILE_SCALE
+        if ring_suffix == "25_50km" and "frag_edge_prop" in band_names
+        else 4
+    )
 
     reduction_kwargs = {
         "collection": features,
         "reducer": ee.Reducer.mean(),
-        "tileScale": 4,
+        "tileScale": tile_scale,
         "maxPixelsPerRegion": int(1e13),
     }
     if float(scale_m) < 1:
