@@ -52,13 +52,18 @@ RING_EXTRACTION_SCALES_DEG = {
     "25_50km": 0.0180,
 }
 
-# The 5 km prediction grid makes the 25-50 km fragmentation exports much
-# heavier than the other Hansen exports. Use a coarser working grid for this
-# one derived edge layer, while keeping the same output column name.
+# The 5 km prediction grid makes the 25-50 km Hansen exports much heavier than
+# the other scales. Use coarser working grids for the large-ring layers that
+# exceed Earth Engine memory at the default 25-50 km resolution, while keeping
+# the same output column names.
+FOREST_COVER_EXTRACTION_SCALES_DEG = {
+    "25_50km": 0.0450,
+}
+
 FRAGMENTATION_EXTRACTION_SCALES_DEG = {
     "25_50km": 0.0450,
 }
-FRAGMENTATION_LARGE_RING_TILE_SCALE = 16
+HANSEN_LARGE_RING_TILE_SCALE = 16
 
 HANSEN_PREDICTION_BANDS = [
     "forest_cover_prop",
@@ -137,6 +142,11 @@ def ring_scale_degrees(suffix: str) -> float:
     return RING_EXTRACTION_SCALES_DEG.get(suffix, 0.0090)
 
 
+def forest_cover_scale_degrees(suffix: str) -> float:
+    """Return the prediction-grid forest-cover extraction scale in degrees."""
+    return FOREST_COVER_EXTRACTION_SCALES_DEG.get(suffix, ring_scale_degrees(suffix))
+
+
 def fragmentation_scale_degrees(suffix: str) -> float:
     """Return the prediction-grid fragmentation extraction scale in degrees."""
     return FRAGMENTATION_EXTRACTION_SCALES_DEG.get(suffix, ring_scale_degrees(suffix))
@@ -149,6 +159,10 @@ def ring_scale_m(suffix: str) -> int:
 
 def scaled_family_scale_m(family: str, ring_suffix: str | None = None) -> int | float:
     """Return the reduction scale for one prediction-grid scaled covariate family."""
+    if family == "forest_cover":
+        if ring_suffix is not None:
+            return forest_cover_scale_degrees(ring_suffix)
+        return _BASE.HANSEN_BUFFER_SCALE_M
     if family == "fragmentation":
         if ring_suffix is not None:
             return fragmentation_scale_degrees(ring_suffix)
@@ -503,8 +517,8 @@ def reduce_image_over_buffer_features(
     output_names = [f"{name}_{ring_suffix}" for name in band_names]
     renamed = image.select(band_names).rename(output_names)
     tile_scale = (
-        FRAGMENTATION_LARGE_RING_TILE_SCALE
-        if ring_suffix == "25_50km" and "frag_edge_prop" in band_names
+        HANSEN_LARGE_RING_TILE_SCALE
+        if ring_suffix == "25_50km" and any(name in band_names for name in {"forest_cover_prop", "frag_edge_prop"})
         else 4
     )
 
